@@ -1,0 +1,6 @@
+# Ignore python cache
+__pycache__/
+
+# Ignore dummy video files
+input.mp4
+output/

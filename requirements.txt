@@ -1,0 +1,5 @@
+ffmpeg-python
+scenedetect
+opencv-python
+imageio
+imageio-ffmpeg

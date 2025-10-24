@@ -76,7 +76,7 @@ recordButton.addEventListener('click', async () => {
         };
 
         mediaRecorder.onstop = () => {
-            exportButton.textContent = "Export Ready";
+            document.body.dataset.recordingState = 'ready';
         };
 
         mediaRecorder.onerror = (event) => {

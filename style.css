@@ -39,11 +39,12 @@ h1 {
 canvas {
     border: 1px solid black;
     background-color: white;
+    touch-action: none;
 }
 
 video {
     display: none;
-    width: 1080px;
+    width: 270px;
     margin-top: 10px;
 }
 

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stylus Video MVP</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>Stylus Video MVP</h1>
+    <div class="toolbar">
+        <div class="color-palette">
+            <div class="color-box" style="background-color: black;" data-color="black"></div>
+            <div class="color-box" style="background-color: red;" data-color="red"></div>
+            <div class="color-box" style="background-color: blue;" data-color="blue"></div>
+            <div class="color-box" style="background-color: green;" data-color="green"></div>
+            <div class="color-box" style="background-color: yellow;" data-color="yellow"></div>
+        </div>
+        <button id="clear-button">Clear</button>
+    </div>
+    <canvas id="canvas" width="1080" height="1920"></canvas>
+    <video id="preview" controls></video>
+    <div class="controls">
+        <button id="record-button">Record</button>
+        <button id="preview-button">Preview</button>
+        <button id="export-button">Export</button>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

@@ -3,7 +3,8 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    background-color: #f0f0f0;
+    background-color: #1e1e2f;
+    color: #f0f0f0;
 }
 
 h1 {
@@ -37,8 +38,8 @@ h1 {
 }
 
 canvas {
-    border: 1px solid black;
-    background-color: white;
+    border: 1px solid #f0f0f0;
+    background-color: #1e1e2f;
     touch-action: none;
 }
 

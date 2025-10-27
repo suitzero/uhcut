@@ -1,14 +1,31 @@
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
+const colorPalette = document.querySelector('.color-palette');
+const clearButton = document.getElementById('clear-button');
+const recordButton = document.getElementById('record-button');
+const exportButton = document.getElementById('export-button');
+const textToolButton = document.getElementById('text-tool-button');
+const previewButton = document.getElementById('preview-button');
+const previewVideo = document.getElementById('preview');
 
 let isDrawing = false;
+let isTextMode = false;
 let lastX = 0;
 let lastY = 0;
 
-function draw(e) {
-    if (!isDrawing) return;
+let mediaRecorder;
+let recordedChunks = [];
 
-    // Get the position of the pointer relative to the canvas
+// Set initial drawing styles
+ctx.strokeStyle = 'white';
+ctx.fillStyle = 'white';
+ctx.lineWidth = 5;
+ctx.lineCap = 'round';
+ctx.lineJoin = 'round';
+
+function draw(e) {
+    if (!isDrawing || isTextMode) return;
+
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
@@ -21,38 +38,75 @@ function draw(e) {
     [lastX, lastY] = [x, y];
 }
 
-canvas.addEventListener('pointerdown', (e) => {
-    isDrawing = true;
+function handleText(e) {
     const rect = canvas.getBoundingClientRect();
-    [lastX, lastY] = [e.clientX - rect.left, e.clientY - rect.top];
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.style.position = 'absolute';
+    textInput.style.left = `${e.clientX}px`;
+    textInput.style.top = `${e.clientY}px`;
+    textInput.style.border = '1px solid #ccc';
+    textInput.style.font = '16px sans-serif';
+    textInput.style.padding = '5px';
+    textInput.style.background = '#1e1e2f';
+    textInput.style.color = 'white';
+
+    document.body.appendChild(textInput);
+    textInput.focus();
+
+    const finishEditing = () => {
+        if (document.body.contains(textInput)) {
+            drawText(textInput.value, x, y);
+            document.body.removeChild(textInput);
+        }
+    };
+
+    textInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            finishEditing();
+        }
+    });
+
+    textInput.addEventListener('blur', finishEditing);
+}
+
+function drawText(text, x, y) {
+    ctx.font = '16px sans-serif';
+    ctx.fillText(text, x, y);
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+    if (isTextMode) {
+        handleText(e);
+    } else {
+        isDrawing = true;
+        const rect = canvas.getBoundingClientRect();
+        [lastX, lastY] = [e.clientX - rect.left, e.clientY - rect.top];
+    }
 });
 
 canvas.addEventListener('pointermove', draw);
 canvas.addEventListener('pointerup', () => isDrawing = false);
-canvas.addEventListener('pointerout', () => isDrawing = false); // Stop drawing if pointer leaves canvas
-
-// Set initial drawing styles
-ctx.strokeStyle = 'black';
-ctx.lineWidth = 5;
-ctx.lineCap = 'round';
-ctx.lineJoin = 'round';
-
-const colorPalette = document.querySelector('.color-palette');
+canvas.addEventListener('pointerout', () => isDrawing = false);
 
 colorPalette.addEventListener('click', (e) => {
     if (e.target.classList.contains('color-box')) {
-        ctx.strokeStyle = e.target.dataset.color;
+        const color = e.target.dataset.color;
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
     }
 });
 
-const clearButton = document.getElementById('clear-button');
-const recordButton = document.getElementById('record-button');
-const exportButton = document.getElementById('export-button');
-const previewButton = document.getElementById('preview-button');
-const previewVideo = document.getElementById('preview');
-
-let mediaRecorder;
-let recordedChunks = [];
+textToolButton.addEventListener('click', () => {
+    isTextMode = !isTextMode;
+    textToolButton.classList.toggle('active', isTextMode);
+    canvas.style.cursor = isTextMode ? 'text' : 'crosshair';
+    // When entering text mode, stop any current drawing
+    isDrawing = false;
+});
 
 clearButton.addEventListener('click', () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -60,12 +114,17 @@ clearButton.addEventListener('click', () => {
 
 recordButton.addEventListener('click', async () => {
     if (recordButton.textContent === 'Record') {
-        recordedChunks = []; // Clear previous recordings
+        recordedChunks = [];
         const stream = canvas.captureStream();
-        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const compositeStream = new MediaStream([...stream.getTracks(), ...audioStream.getTracks()]);
+        try {
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const compositeStream = new MediaStream([...stream.getTracks(), ...audioStream.getTracks()]);
+            mediaRecorder = new MediaRecorder(compositeStream);
+        } catch (err) {
+            console.error("Audio permission denied. Recording video without audio.", err);
+            mediaRecorder = new MediaRecorder(stream);
+        }
 
-        mediaRecorder = new MediaRecorder(compositeStream);
         mediaRecorder.start();
         recordButton.textContent = 'Stop';
 
@@ -95,13 +154,11 @@ exportButton.addEventListener('click', () => {
         alert("No recording to export!");
         return;
     }
-    const blob = new Blob(recordedChunks, {
-        type: 'video/webm'
-    });
+    const blob = new Blob(recordedChunks, { type: 'video/webm' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     document.body.appendChild(a);
-    a.style = 'display: none';
+    a.style.display = 'none';
     a.href = url;
     a.download = 'recording.webm';
     a.click();
@@ -113,9 +170,7 @@ previewButton.addEventListener('click', () => {
         alert("No recording to preview!");
         return;
     }
-    const blob = new Blob(recordedChunks, {
-        type: 'video/webm'
-    });
+    const blob = new Blob(recordedChunks, { type: 'video/webm' });
     const url = URL.createObjectURL(blob);
     previewVideo.src = url;
     previewVideo.style.display = 'block';

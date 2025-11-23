@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>UhCut - Video Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="logo">UhCut</div>
+            <div class="actions">
+                <button id="export-btn">Export</button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="workspace">
+            <!-- Media Library (Hidden by default on mobile?) -->
+            <div class="media-library" id="media-library">
+                <h3>Media</h3>
+                <div class="drop-zone" id="drop-zone">
+                    Drag & Drop Video/Audio here
+                    <input type="file" id="file-upload" multiple accept="video/*,audio/*" style="display:none">
+                </div>
+                <div class="media-list" id="media-list">
+                    <!-- Thumbnails go here -->
+                </div>
+            </div>
+
+            <!-- Preview Player -->
+            <div class="preview-area">
+                <div class="video-container">
+                    <video id="main-video" playsinline></video>
+                    <canvas id="overlay-canvas"></canvas> <!-- For drawing or overlays -->
+                </div>
+                <div class="playback-controls">
+                    <button id="play-pause-btn">Play</button>
+                    <span id="time-display">00:00 / 00:00</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toolbar -->
+        <div class="toolbar">
+            <button id="tool-split" class="tool-btn">Split</button>
+            <button id="tool-delete" class="tool-btn">Delete</button>
+            <button id="tool-extract-audio" class="tool-btn">Extract Audio</button>
+            <button id="tool-record" class="tool-btn">Record</button>
+            <button id="tool-silence" class="tool-btn">Remove Silence</button>
+        </div>
+
+        <!-- Timeline -->
+        <div class="timeline-container">
+            <div class="timeline-header">
+                <div class="time-ruler" id="time-ruler"></div>
+            </div>
+            <div class="timeline-tracks" id="timeline-tracks">
+                <!-- Tracks will be injected here -->
+                <div class="track video-track" data-type="video"></div>
+                <div class="track audio-track" data-type="audio"></div>
+            </div>
+            <div class="playhead" id="playhead"></div>
+        </div>
+
+        <!-- Recording Modal/Overlay -->
+        <div id="record-overlay" class="modal hidden">
+            <div class="modal-content">
+                <h3>Recording</h3>
+                <canvas id="waveform-canvas" width="300" height="100"></canvas>
+                <div class="modal-actions">
+                    <button id="stop-record-btn">Stop & Add</button>
+                    <button id="cancel-record-btn">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

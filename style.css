@@ -1,0 +1,294 @@
+:root {
+    --bg-color: #1e1e2f;
+    --panel-bg: #252535;
+    --accent-color: #00d2ff;
+    --text-color: #ffffff;
+    --border-color: #333;
+    --track-bg: #333;
+    --clip-video: #4a90e2;
+    --clip-audio: #50e3c2;
+    --timeline-height: 200px;
+}
+
+* {
+    box-sizing: border-box;
+    user-select: none; /* Prevent selection for easier drag/drop */
+}
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.top-bar {
+    height: 40px;
+    background: var(--panel-bg);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.workspace {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.media-library {
+    width: 250px;
+    background: var(--panel-bg);
+    border-right: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+}
+
+.drop-zone {
+    border: 2px dashed var(--border-color);
+    padding: 20px;
+    text-align: center;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-bottom: 10px;
+    font-size: 0.9rem;
+    color: #aaa;
+}
+
+.drop-zone:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.media-list {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.media-item {
+    background: #333;
+    margin-bottom: 5px;
+    padding: 5px;
+    border-radius: 4px;
+    cursor: grab;
+    font-size: 0.8rem;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.preview-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    position: relative;
+}
+
+.video-container {
+    position: relative;
+    max-width: 100%;
+    max-height: 80%;
+    aspect-ratio: 16/9;
+}
+
+#main-video {
+    width: 100%;
+    height: 100%;
+    background: #000;
+}
+
+#overlay-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.playback-controls {
+    margin-top: 10px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+button {
+    background: #444;
+    border: none;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #555;
+}
+
+.toolbar {
+    height: 50px;
+    background: var(--panel-bg);
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 10px;
+    overflow-x: auto;
+    border-top: 1px solid var(--border-color);
+}
+
+.tool-btn {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-width: 60px;
+}
+
+.timeline-container {
+    height: var(--timeline-height);
+    background: #111;
+    position: relative;
+    overflow-x: scroll;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.timeline-header {
+    height: 20px;
+    background: #222;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.time-ruler {
+    width: 2000px; /* Dynamic width later */
+    height: 100%;
+    background-image: linear-gradient(90deg, #555 1px, transparent 1px);
+    background-size: 50px 100%; /* Tick marks every 50px */
+}
+
+.timeline-tracks {
+    flex: 1;
+    position: relative;
+    width: 2000px; /* Dynamic */
+    padding-top: 10px;
+}
+
+.track {
+    height: 50px;
+    margin-bottom: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    position: relative;
+}
+
+.clip {
+    position: absolute;
+    height: 100%;
+    background: var(--clip-video);
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    color: white;
+}
+
+.clip.selected {
+    border: 2px solid var(--accent-color);
+}
+
+.clip[data-type="audio"] {
+    background: var(--clip-audio);
+    color: #000;
+}
+
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 20px; /* Initial position */
+    width: 2px;
+    background: white;
+    z-index: 20;
+    pointer-events: none;
+}
+
+.playhead::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -5px;
+    width: 10px;
+    height: 10px;
+    background: white;
+    border-radius: 50%; /* Triangle shape maybe? */
+}
+
+/* Modal */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: var(--panel-bg);
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+/* Mobile Adjustments */
+@media (max-width: 768px) {
+    .workspace {
+        flex-direction: column;
+    }
+    .media-library {
+        width: 100%;
+        height: 150px; /* Collapsed height */
+        order: 2; /* Move below preview */
+        display: none; /* Hide initially or use a toggle */
+    }
+    .preview-area {
+        height: 40vh;
+    }
+    .timeline-container {
+        flex: 1;
+    }
+}

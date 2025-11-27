@@ -135,8 +135,19 @@ function addMediaToLibrary(item) {
     div.draggable = true;
     div.dataset.id = item.id;
 
+    // Drag support
     div.addEventListener('dragstart', (e) => {
         e.dataTransfer.setData('text/plain', JSON.stringify(item));
+    });
+
+    // Mobile/Click support (fallback for iOS)
+    div.addEventListener('click', (e) => {
+        // Simple visual feedback
+        div.style.background = '#00d2ff';
+        setTimeout(() => div.style.background = '#333', 200);
+
+        // Add to timeline at current playhead position
+        addClipToTimeline(item, state.playbackTime);
     });
 
     mediaList.appendChild(div);
@@ -621,28 +632,52 @@ function setupExport() {
         const stream = canvas.captureStream(30);
         // Add audio tracks
         globalDest.stream.getAudioTracks().forEach(track => stream.addTrack(track));
-        // FIX: We need to modify `syncVideo` to connect created Audio elements to our export destination if exporting.
-        // For MVP simplicity: We will just record the canvas stream and hope the microphone picks up system audio? No, that's bad.
-        // Better: We must route audio properly.
-        // Since we create `new Audio()` dynamically, we need to intercept that.
-        // Let's rely on a global `audioDestination` node if it exists.
 
-        window.exportAudioDestination = dest; // Hack for syncVideo to see
+        // Find supported Mime Type (iOS Safari Fix)
+        const mimeTypes = [
+            'video/webm;codecs=vp9',
+            'video/webm;codecs=vp8',
+            'video/webm',
+            'video/mp4;codecs=avc1', // Safari 14.1+
+            'video/mp4'
+        ];
 
-        const stream = canvas.captureStream(30);
-        // Add audio tracks
-        dest.stream.getAudioTracks().forEach(track => stream.addTrack(track));
+        let selectedMimeType = '';
+        for (const type of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(type)) {
+                selectedMimeType = type;
+                break;
+            }
+        }
 
-        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        // Fallback: let browser choose default
+        const options = selectedMimeType ? { mimeType: selectedMimeType } : undefined;
+        console.log('Exporting with MIME:', selectedMimeType || 'default');
+
+        let recorder;
+        try {
+            recorder = new MediaRecorder(stream, options);
+        } catch (e) {
+             console.error('MediaRecorder error:', e);
+             alert('Error initializing recorder. Your browser might not support this format.');
+             state.isPlaying = false;
+             return;
+        }
+
         const chunks = [];
 
-        recorder.ondataavailable = e => chunks.push(e.data);
+        recorder.ondataavailable = e => {
+            if (e.data.size > 0) chunks.push(e.data);
+        };
+
         recorder.onstop = () => {
-             const blob = new Blob(chunks, { type: 'video/webm' });
+             // Determine extension based on type
+             const ext = (selectedMimeType && selectedMimeType.includes('mp4')) ? 'mp4' : 'webm';
+             const blob = new Blob(chunks, { type: selectedMimeType || 'video/webm' });
              const url = URL.createObjectURL(blob);
              const a = document.createElement('a');
              a.href = url;
-             a.download = 'uhcut-export.webm';
+             a.download = `uhcut-export.${ext}`;
              a.click();
 
              // Cleanup

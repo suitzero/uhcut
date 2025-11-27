@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>UhCut - Video Editor</title>
     <link rel="stylesheet" href="style.css">
+
+    <!-- PWA / iOS Support -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="https://placehold.co/180x180/252535/00d2ff?text=UhCut">
+    <meta name="theme-color" content="#252535">
 </head>
 <body>
     <div class="app-container">
@@ -22,7 +29,7 @@
             <div class="media-library" id="media-library">
                 <h3>Media</h3>
                 <div class="drop-zone" id="drop-zone">
-                    Drag & Drop Video/Audio here
+                    Tap or Drag Media Here
                     <input type="file" id="file-upload" multiple accept="video/*,audio/*" style="display:none">
                 </div>
                 <div class="media-list" id="media-list">

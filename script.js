@@ -11,6 +11,9 @@ const state = {
     selectedClipId: null
 };
 
+const historyStack = [];
+const redoStack = [];
+
 // DOM Elements
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-upload');
@@ -35,6 +38,59 @@ function init() {
     setupExport();
     setupMobileUI();
     requestAnimationFrame(renderLoop);
+}
+
+function saveState() {
+    // Deep copy state (excluding media objects which are large and constant mostly, but their list is small)
+    // Actually, we need to save tracks mostly. Media list modifications (additions) are additive.
+    // For simplicity, we deep clone the tracks.
+    const snapshot = {
+        tracks: JSON.parse(JSON.stringify(state.tracks)),
+        selectedClipId: state.selectedClipId,
+        playbackTime: state.playbackTime,
+        zoom: state.zoom
+    };
+    historyStack.push(snapshot);
+    redoStack.length = 0; // clear redo
+
+    if (historyStack.length > 50) historyStack.shift(); // Limit history
+}
+
+function restoreState(snapshot) {
+    state.tracks = JSON.parse(JSON.stringify(snapshot.tracks));
+    state.selectedClipId = snapshot.selectedClipId;
+    state.playbackTime = snapshot.playbackTime;
+    state.zoom = snapshot.zoom;
+    renderTimeline();
+    seek(state.playbackTime);
+}
+
+function undo() {
+    if (historyStack.length === 0) return;
+    const currentSnapshot = {
+        tracks: JSON.parse(JSON.stringify(state.tracks)),
+        selectedClipId: state.selectedClipId,
+        playbackTime: state.playbackTime,
+        zoom: state.zoom
+    };
+    redoStack.push(currentSnapshot);
+
+    const snapshot = historyStack.pop();
+    restoreState(snapshot);
+}
+
+function redo() {
+    if (redoStack.length === 0) return;
+    const currentSnapshot = {
+        tracks: JSON.parse(JSON.stringify(state.tracks)),
+        selectedClipId: state.selectedClipId,
+        playbackTime: state.playbackTime,
+        zoom: state.zoom
+    };
+    historyStack.push(currentSnapshot);
+
+    const snapshot = redoStack.pop();
+    restoreState(snapshot);
 }
 
 function setupMobileUI() {
@@ -186,6 +242,7 @@ function setupTimelineInteraction() {
 }
 
 function addClipToTimeline(mediaItem, startTime) {
+    saveState();
     const clipId = 'clip_' + Date.now();
     const clip = {
         id: clipId,
@@ -223,7 +280,21 @@ function renderTimeline() {
 
             // Content
             const media = state.media.find(m => m.id === clip.mediaId);
-            el.textContent = media ? media.name : 'Unknown';
+            // el.textContent = media ? media.name : 'Unknown';
+            // Use inner structure for advanced visuals
+
+            const label = document.createElement('span');
+            label.className = 'clip-label';
+            label.textContent = media ? media.name : 'Unknown';
+            el.appendChild(label);
+
+            if (media) {
+                if (type === 'audio') {
+                    drawWaveform(media, clip, el);
+                } else if (type === 'video') {
+                    drawVideoThumbnails(media, clip, el);
+                }
+            }
 
             trackEl.appendChild(el);
         });
@@ -237,6 +308,133 @@ function renderTimeline() {
     );
     timelineTracks.style.width = (maxTime * state.zoom + 500) + 'px';
     document.getElementById('time-ruler').style.width = timelineTracks.style.width;
+}
+
+// Visuals Cache
+const waveformCache = {}; // mediaId -> AudioBuffer
+const thumbnailCache = {}; // mediaId_offset -> DataURL
+
+async function drawWaveform(media, clip, container) {
+    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    let buffer = waveformCache[media.id];
+
+    // Fetch if not cached
+    if (!buffer) {
+        try {
+            const response = await fetch(media.url);
+            const arrayBuffer = await response.arrayBuffer();
+            buffer = await audioContext.decodeAudioData(arrayBuffer);
+            waveformCache[media.id] = buffer;
+        } catch (e) {
+            console.error("Error loading waveform", e);
+            return;
+        }
+    }
+
+    // Draw
+    const canvas = document.createElement('canvas');
+    canvas.className = 'clip-waveform';
+    const width = clip.duration * state.zoom;
+    const height = TRACK_HEIGHT;
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    const data = buffer.getChannelData(0);
+    const step = Math.ceil(data.length / width); // simplified sampling
+    // Actually we need to respect clip.offset
+
+    const startSample = Math.floor(clip.offset * buffer.sampleRate);
+    const endSample = Math.floor((clip.offset + clip.duration) * buffer.sampleRate);
+    const totalSamples = endSample - startSample;
+    const samplesPerPixel = Math.floor(totalSamples / width);
+
+    ctx.fillStyle = '#1e1e2f'; // bg matching theme slightly
+    ctx.strokeStyle = '#000'; // dark wave on bright clip
+    ctx.beginPath();
+
+    for (let x = 0; x < width; x++) {
+        const index = startSample + (x * samplesPerPixel);
+        if (index >= buffer.length) break;
+
+        // Find max amplitude in this bucket
+        let max = 0;
+        for (let j = 0; j < samplesPerPixel; j++) {
+            if (index + j < buffer.length) {
+                 const val = Math.abs(data[index + j]);
+                 if (val > max) max = val;
+            }
+        }
+
+        const h = max * height;
+        const y = (height - h) / 2;
+
+        ctx.moveTo(x, y);
+        ctx.lineTo(x, y + h);
+    }
+    ctx.stroke();
+
+    // Append behind text
+    container.insertBefore(canvas, container.firstChild);
+}
+
+function drawVideoThumbnails(media, clip, container) {
+    // Generate filmstrip
+    // We want a thumbnail every ~100px or so
+    const clipWidth = clip.duration * state.zoom;
+    const numThumbs = Math.ceil(clipWidth / 100);
+    const thumbWidth = clipWidth / numThumbs;
+
+    const strip = document.createElement('div');
+    strip.className = 'clip-filmstrip';
+    container.insertBefore(strip, container.firstChild);
+
+    const video = document.createElement('video');
+    video.src = media.url;
+    video.currentTime = clip.offset; // Start
+
+    // This is asynchronous and tricky to do perfectly without heavy performance hit.
+    // Simplified approach: just show 3 thumbnails (start, middle, end) if possible, or tiled
+
+    // Actually, let's create simple divs
+    for (let i = 0; i < numThumbs; i++) {
+        const thumbTime = clip.offset + (i * (clip.duration / numThumbs));
+        const thumbDiv = document.createElement('div');
+        thumbDiv.className = 'video-thumb';
+        thumbDiv.style.width = thumbWidth + 'px';
+
+        // We need to capture frame.
+        // We can't easily sync wait for video seek in a loop.
+        // Optimization: Create a unique ID for this thumb request
+        captureThumbnail(video, thumbTime).then(url => {
+            thumbDiv.style.backgroundImage = `url(${url})`;
+        });
+
+        strip.appendChild(thumbDiv);
+    }
+}
+
+async function captureThumbnail(videoElement, time) {
+    // Clone video to not mess with playback? No, we create a new element in drawVideoThumbnails
+    // But we need to wait for seek.
+
+    return new Promise((resolve) => {
+        const v = document.createElement('video');
+        v.src = videoElement.src;
+        v.currentTime = time;
+        v.muted = true;
+        v.onseeked = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = 160; // low res
+            canvas.height = 90;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL());
+        };
+        // Trigger load
+        v.load();
+    });
 }
 
 function selectClip(id) {
@@ -368,8 +566,24 @@ playPauseBtn.addEventListener('click', () => {
 
 // Toolbar
 function setupToolbar() {
+    document.getElementById('tool-undo').addEventListener('click', undo);
+    document.getElementById('tool-redo').addEventListener('click', redo);
+
+    document.getElementById('tool-zoom-in').addEventListener('click', () => {
+        state.zoom = Math.min(100, state.zoom * 1.5);
+        renderTimeline();
+        seek(state.playbackTime); // Re-center
+    });
+
+    document.getElementById('tool-zoom-out').addEventListener('click', () => {
+        state.zoom = Math.max(2, state.zoom / 1.5);
+        renderTimeline();
+        seek(state.playbackTime);
+    });
+
     document.getElementById('tool-delete').addEventListener('click', () => {
         if (state.selectedClipId) {
+            saveState();
             state.tracks.video = state.tracks.video.filter(c => c.id !== state.selectedClipId);
             state.tracks.audio = state.tracks.audio.filter(c => c.id !== state.selectedClipId);
             state.selectedClipId = null;
@@ -390,6 +604,7 @@ function setupToolbar() {
             if (clip) {
                 const relativeTime = state.playbackTime - clip.startTime;
                 if (relativeTime > 0 && relativeTime < clip.duration) {
+                    saveState();
                     // Create new clip for the second half
                     const newClip = {
                         ...clip,
@@ -796,14 +1011,23 @@ async function removeSilence() {
              return chunk.end > clip.offset && chunk.start < (clip.offset + clip.duration);
         });
 
+        saveState(); // Support Undo for this massive change
+
         // Remove original clip
         state.tracks[trackType] = state.tracks[trackType].filter(c => c.id !== clip.id);
 
         // Add new clips
+        // Note: The chunks are intervals of SPEECH.
+        // We want to place these chunks on the timeline such that the SILENCE is skipped.
+        // The original logic was:
+        // currentTimelinePos starts at clip.startTime.
+        // For each chunk, we add a clip of that duration, then increment currentTimelinePos.
+        // This effectively "collapses" the silence, which is what the user wants ("remove silence... remove the audio clip itself" implies shortening/editing).
+
         let currentTimelinePos = clip.startTime;
 
         validChunks.forEach(chunk => {
-            // Clip chunk to the original clip boundaries
+            // Clip chunk to the original clip boundaries (offset perspective)
             const chunkStart = Math.max(chunk.start, clip.offset);
             const chunkEnd = Math.min(chunk.end, clip.offset + clip.duration);
             const duration = chunkEnd - chunkStart;
@@ -815,7 +1039,8 @@ async function removeSilence() {
                     startTime: currentTimelinePos,
                     duration: duration,
                     offset: chunkStart,
-                    type: clip.type
+                    type: clip.type,
+                    muted: clip.muted
                 };
                 state.tracks[trackType].push(newClip);
                 currentTimelinePos += duration;

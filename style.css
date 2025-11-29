@@ -292,3 +292,48 @@ button:hover {
         flex: 1;
     }
 }
+.separator {
+    width: 1px;
+    height: 30px;
+    background: #555;
+    margin: 0 5px;
+}
+.clip-label {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    z-index: 10;
+    pointer-events: none;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+}
+
+.clip-waveform {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0.8;
+}
+
+.clip-filmstrip {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+    display: flex;
+    overflow: hidden;
+    opacity: 0.5; /* Fade so text is visible */
+    pointer-events: none;
+}
+
+.video-thumb {
+    height: 100%;
+    background-size: cover;
+    background-position: center;
+    border-right: 1px solid rgba(0,0,0,0.3);
+}

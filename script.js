@@ -13,6 +13,10 @@ const state = {
 
 const historyStack = [];
 const redoStack = [];
+let isDraggingClip = false;
+let dragClipId = null;
+let dragStartX = 0;
+let dragOriginalStartTime = 0;
 
 // DOM Elements
 const dropZone = document.getElementById('drop-zone');
@@ -225,20 +229,138 @@ function setupTimelineInteraction() {
         addClipToTimeline(item, startTime);
     });
 
+    timelineTracks.addEventListener('mousedown', handleClipMouseDown);
+    timelineTracks.addEventListener('touchstart', handleClipMouseDown, {passive: false});
+
+    // We attach move/up to window to handle drags outside container
+    window.addEventListener('mousemove', handleClipMouseMove);
+    window.addEventListener('touchmove', handleClipMouseMove, {passive: false});
+    window.addEventListener('mouseup', handleClipMouseUp);
+    window.addEventListener('touchend', handleClipMouseUp);
+
+    // Zoom interactions
+    timelineTracks.addEventListener('wheel', (e) => {
+        if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const zoomChange = e.deltaY > 0 ? 0.9 : 1.1;
+            zoom(state.zoom * zoomChange, e.clientX);
+        }
+    });
+
+    // Pinch Zoom (Mobile)
+    let initialPinchDist = 0;
+    timelineTracks.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) {
+             initialPinchDist = Math.hypot(
+                 e.touches[0].pageX - e.touches[1].pageX,
+                 e.touches[0].pageY - e.touches[1].pageY
+             );
+        }
+    }, {passive: false});
+
+    timelineTracks.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2 && initialPinchDist > 0) {
+            e.preventDefault();
+            const dist = Math.hypot(
+                 e.touches[0].pageX - e.touches[1].pageX,
+                 e.touches[0].pageY - e.touches[1].pageY
+            );
+            const zoomChange = dist / initialPinchDist;
+            // Dampen
+            const newZoom = state.zoom * (zoomChange > 1 ? 1.02 : 0.98);
+            zoom(newZoom, (e.touches[0].pageX + e.touches[1].pageX)/2);
+            initialPinchDist = dist;
+        }
+    }, {passive: false});
+
+    // Click / Seek
     timelineTracks.addEventListener('click', (e) => {
-        if (e.target.classList.contains('clip')) {
-            selectClip(e.target.dataset.clipId);
+        // Prevent seeking if we just finished dragging
+        if (isDraggingClip) return;
+
+        if (e.target.closest('.clip')) {
+            selectClip(e.target.closest('.clip').dataset.clipId);
         } else {
             selectClip(null);
-        }
-
-        // Move playhead if clicked on background
-        if (!e.target.classList.contains('clip')) {
             const rect = timelineTracks.getBoundingClientRect();
             const x = e.clientX - rect.left + timelineTracks.scrollLeft;
             seek(x / state.zoom);
         }
     });
+}
+
+function handleClipMouseDown(e) {
+    const clipEl = e.target.closest('.clip');
+    if (!clipEl) return;
+
+    // If dragging scrollbar (mobile), ignore?
+    // Start Drag
+    isDraggingClip = true;
+    dragClipId = clipEl.dataset.clipId;
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    dragStartX = clientX;
+
+    // Find clip model
+    const type = clipEl.dataset.type;
+    const clip = state.tracks[type].find(c => c.id === dragClipId);
+    dragOriginalStartTime = clip.startTime;
+
+    selectClip(dragClipId);
+}
+
+function handleClipMouseMove(e) {
+    if (!isDraggingClip || !dragClipId) return;
+    e.preventDefault();
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const deltaX = clientX - dragStartX;
+    const deltaTime = deltaX / state.zoom;
+
+    // Update clip position
+    let type = 'video';
+    let clip = state.tracks.video.find(c => c.id === dragClipId);
+    if (!clip) {
+        type = 'audio';
+        clip = state.tracks.audio.find(c => c.id === dragClipId);
+    }
+
+    if (clip) {
+        clip.startTime = Math.max(0, dragOriginalStartTime + deltaTime);
+        // Visual update only? Or full render?
+        // Full render is safer for keeping UI in sync, though heavier.
+        // Optimization: just update style left
+        const el = document.querySelector(`.clip[data-clip-id="${dragClipId}"]`);
+        if (el) {
+            el.style.left = (clip.startTime * state.zoom) + 'px';
+        }
+    }
+}
+
+function handleClipMouseUp(e) {
+    if (isDraggingClip) {
+        isDraggingClip = false;
+        // Finalize state (render ruler updates, overlap checks etc)
+        renderTimeline();
+    }
+}
+
+function zoom(newZoom, centerClientX) {
+    // Zoom around center
+    const rect = timelineTracks.getBoundingClientRect();
+    const mouseX = (centerClientX || (rect.left + rect.width/2)) - rect.left;
+    const timeAtMouse = (mouseX + timelineTracks.scrollLeft) / state.zoom;
+
+    state.zoom = Math.max(1, Math.min(200, newZoom)); // Clamp
+
+    // Adjust scroll to keep timeAtMouse in same place
+    // newX + newScroll = timeAtMouse * newZoom
+    // newScroll = timeAtMouse * newZoom - mouseX
+
+    renderTimeline();
+
+    const newScroll = (timeAtMouse * state.zoom) - mouseX;
+    timelineTracks.scrollLeft = Math.max(0, newScroll);
 }
 
 function addClipToTimeline(mediaItem, startTime) {
@@ -307,12 +429,45 @@ function renderTimeline() {
         10 // min 10 seconds
     );
     timelineTracks.style.width = (maxTime * state.zoom + 500) + 'px';
-    document.getElementById('time-ruler').style.width = timelineTracks.style.width;
+
+    renderRuler(maxTime + 10);
+}
+
+function renderRuler(duration) {
+    const ruler = document.getElementById('time-ruler');
+    ruler.style.width = timelineTracks.style.width;
+    ruler.innerHTML = ''; // Clear
+
+    // Determine tick interval
+    // If zoom is high (100px/s), show every second.
+    // If zoom is low (10px/s), show every 10 seconds.
+    let interval = 1;
+    if (state.zoom < 20) interval = 5;
+    if (state.zoom < 5) interval = 10;
+
+    const stepPx = interval * state.zoom;
+
+    for (let t = 0; t <= duration; t += interval) {
+        const tick = document.createElement('div');
+        tick.className = 'ruler-tick';
+        tick.style.left = (t * state.zoom) + 'px';
+
+        const label = document.createElement('span');
+        const m = Math.floor(t / 60);
+        const s = t % 60;
+        label.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+
+        tick.appendChild(label);
+        ruler.appendChild(tick);
+    }
 }
 
 // Visuals Cache
 const waveformCache = {}; // mediaId -> AudioBuffer
-const thumbnailCache = {}; // mediaId_offset -> DataURL
+const thumbnailCache = {}; // mediaId_offset_zoom -> DataURL
+
+// Shared Video Element for Thumbnail Generation
+let sharedThumbVideo = null;
 
 async function drawWaveform(media, clip, container) {
     if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -342,7 +497,7 @@ async function drawWaveform(media, clip, container) {
 
     const ctx = canvas.getContext('2d');
     const data = buffer.getChannelData(0);
-    const step = Math.ceil(data.length / width); // simplified sampling
+    // const step = Math.ceil(data.length / width); // simplified sampling
     // Actually we need to respect clip.offset
 
     const startSample = Math.floor(clip.offset * buffer.sampleRate);
@@ -360,7 +515,9 @@ async function drawWaveform(media, clip, container) {
 
         // Find max amplitude in this bucket
         let max = 0;
-        for (let j = 0; j < samplesPerPixel; j++) {
+        // Optimization: Don't scan entire bucket if it's huge, step through it
+        const bucketStep = Math.ceil(samplesPerPixel / 10);
+        for (let j = 0; j < samplesPerPixel; j += bucketStep) {
             if (index + j < buffer.length) {
                  const val = Math.abs(data[index + j]);
                  if (val > max) max = val;
@@ -381,60 +538,91 @@ async function drawWaveform(media, clip, container) {
 
 function drawVideoThumbnails(media, clip, container) {
     // Generate filmstrip
-    // We want a thumbnail every ~100px or so
+    // We want a thumbnail every ~150px or so to save performance
     const clipWidth = clip.duration * state.zoom;
-    const numThumbs = Math.ceil(clipWidth / 100);
+    const thumbIntervalPx = 150;
+    const numThumbs = Math.ceil(clipWidth / thumbIntervalPx);
     const thumbWidth = clipWidth / numThumbs;
 
     const strip = document.createElement('div');
     strip.className = 'clip-filmstrip';
     container.insertBefore(strip, container.firstChild);
 
-    const video = document.createElement('video');
-    video.src = media.url;
-    video.currentTime = clip.offset; // Start
+    // Use shared video element to avoid memory explosion
+    if (!sharedThumbVideo) {
+        sharedThumbVideo = document.createElement('video');
+        sharedThumbVideo.muted = true;
+        sharedThumbVideo.style.display = 'none';
+        document.body.appendChild(sharedThumbVideo);
+    }
 
-    // This is asynchronous and tricky to do perfectly without heavy performance hit.
-    // Simplified approach: just show 3 thumbnails (start, middle, end) if possible, or tiled
-
-    // Actually, let's create simple divs
     for (let i = 0; i < numThumbs; i++) {
         const thumbTime = clip.offset + (i * (clip.duration / numThumbs));
         const thumbDiv = document.createElement('div');
         thumbDiv.className = 'video-thumb';
         thumbDiv.style.width = thumbWidth + 'px';
-
-        // We need to capture frame.
-        // We can't easily sync wait for video seek in a loop.
-        // Optimization: Create a unique ID for this thumb request
-        captureThumbnail(video, thumbTime).then(url => {
-            thumbDiv.style.backgroundImage = `url(${url})`;
-        });
-
         strip.appendChild(thumbDiv);
+
+        // Check cache first
+        const cacheKey = `${media.id}_${Math.floor(thumbTime * 10)}`; // Cache by 0.1s precision
+        if (thumbnailCache[cacheKey]) {
+            thumbDiv.style.backgroundImage = `url(${thumbnailCache[cacheKey]})`;
+        } else {
+             // Request generation (throttled/queued ideally, but for now direct)
+             // We clone logic inside captureThumbnail to be safe
+             captureThumbnail(media.url, thumbTime, cacheKey).then(url => {
+                if (url) thumbDiv.style.backgroundImage = `url(${url})`;
+            });
+        }
     }
 }
 
-async function captureThumbnail(videoElement, time) {
-    // Clone video to not mess with playback? No, we create a new element in drawVideoThumbnails
-    // But we need to wait for seek.
+// Queue system for thumbnail generation to prevent locking UI
+const thumbQueue = [];
+let isProcessingThumbs = false;
 
+function captureThumbnail(url, time, cacheKey) {
     return new Promise((resolve) => {
-        const v = document.createElement('video');
-        v.src = videoElement.src;
-        v.currentTime = time;
-        v.muted = true;
-        v.onseeked = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 160; // low res
-            canvas.height = 90;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-            resolve(canvas.toDataURL());
-        };
-        // Trigger load
-        v.load();
+        thumbQueue.push({ url, time, cacheKey, resolve });
+        processThumbQueue();
     });
+}
+
+function processThumbQueue() {
+    if (isProcessingThumbs || thumbQueue.length === 0) return;
+    isProcessingThumbs = true;
+
+    const task = thumbQueue.shift();
+
+    if (sharedThumbVideo.src !== task.url) {
+        sharedThumbVideo.src = task.url;
+    }
+
+    // Handle seek
+    sharedThumbVideo.currentTime = task.time;
+
+    const onSeek = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 160; // low res
+        canvas.height = 90;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(sharedThumbVideo, 0, 0, canvas.width, canvas.height);
+        const dataURL = canvas.toDataURL();
+
+        thumbnailCache[task.cacheKey] = dataURL;
+        task.resolve(dataURL);
+
+        sharedThumbVideo.removeEventListener('seeked', onSeek);
+        isProcessingThumbs = false;
+
+        // Next
+        if (thumbQueue.length > 0) {
+            // Small delay to let UI breathe
+            setTimeout(processThumbQueue, 10);
+        }
+    };
+
+    sharedThumbVideo.addEventListener('seeked', onSeek, { once: true });
 }
 
 function selectClip(id) {
@@ -1011,18 +1199,21 @@ async function removeSilence() {
              return chunk.end > clip.offset && chunk.start < (clip.offset + clip.duration);
         });
 
+        // --- FIX FOR BUG: "Remove silence on the voice file remove the audio clip itself" ---
+        // If the entire clip is detected as silence (validChunks is empty), validChunks.length is 0.
+        // Previously, the code would proceed to remove the original clip and add nothing, effectively deleting it.
+        // We should warn the user and abort if no valid chunks remain.
+        if (validChunks.length === 0) {
+            return alert('No speech detected in this clip segment (it appears silent). Clip preserved.');
+        }
+
         saveState(); // Support Undo for this massive change
 
         // Remove original clip
         state.tracks[trackType] = state.tracks[trackType].filter(c => c.id !== clip.id);
 
-        // Add new clips
-        // Note: The chunks are intervals of SPEECH.
-        // We want to place these chunks on the timeline such that the SILENCE is skipped.
-        // The original logic was:
-        // currentTimelinePos starts at clip.startTime.
-        // For each chunk, we add a clip of that duration, then increment currentTimelinePos.
-        // This effectively "collapses" the silence, which is what the user wants ("remove silence... remove the audio clip itself" implies shortening/editing).
+        // Add new clips (Speech Only)
+        // This logic collapses the gaps between speech chunks.
 
         let currentTimelinePos = clip.startTime;
 

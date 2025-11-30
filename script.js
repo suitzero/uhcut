@@ -812,6 +812,63 @@ function setupToolbar() {
         }
     });
 
+    // Add Media Button Logic (Directly to Timeline)
+    document.getElementById('tool-add-media').addEventListener('click', () => {
+        // Reuse the file input, but we might want slightly different behavior (append to timeline vs just add to library)
+        // For simplicity, we trigger the input, and the 'change' listener calls 'handleFiles'.
+        // We modify 'handleFiles' to check a flag or we add a new listener.
+        // Let's create a dedicated input for this to ensure "Add to Timeline" behavior.
+
+        let input = document.getElementById('direct-file-upload');
+        if (!input) {
+            input = document.createElement('input');
+            input.type = 'file';
+            input.id = 'direct-file-upload';
+            input.multiple = true;
+            input.accept = 'video/*,audio/*';
+            input.style.display = 'none';
+            document.body.appendChild(input);
+
+            input.addEventListener('change', (e) => {
+                const files = Array.from(e.target.files);
+                files.forEach(file => {
+                    const url = URL.createObjectURL(file);
+                    const type = file.type.startsWith('video') ? 'video' : 'audio';
+                    const id = Date.now() + Math.random().toString(36).substr(2, 9);
+
+                    const element = document.createElement(type === 'video' ? 'video' : 'audio');
+                    element.preload = 'metadata';
+                    element.onloadedmetadata = () => {
+                        const item = {
+                            id,
+                            file,
+                            url,
+                            type,
+                            name: file.name,
+                            duration: element.duration
+                        };
+                        state.media.push(item);
+                        addMediaToLibrary(item); // Keep library synced
+
+                        // Append to end of timeline
+                        const trackClips = state.tracks[type];
+                        const lastClip = trackClips.length > 0
+                            ? trackClips.reduce((prev, current) => (prev.startTime + prev.duration > current.startTime + current.duration) ? prev : current)
+                            : null;
+
+                        const startTime = lastClip ? (lastClip.startTime + lastClip.duration) : 0;
+                        addClipToTimeline(item, startTime);
+                    };
+                    element.src = url;
+                });
+                // Reset value so change triggers again if same file selected
+                input.value = '';
+            });
+        }
+
+        input.click();
+    });
+
     document.getElementById('tool-record').addEventListener('click', () => {
         document.getElementById('record-overlay').classList.remove('hidden');
         startRecording();
@@ -1154,7 +1211,13 @@ async function removeSilence() {
         // Analyze channel data
         const rawData = audioBuffer.getChannelData(0); // Use first channel
         const sampleRate = audioBuffer.sampleRate;
-        const threshold = 0.02; // Silence threshold (0-1)
+
+        // --- REVIEW: Silence Detection Logic ---
+        // Threshold: Amplitude below this is considered silence.
+        // Lowered to 0.005 (0.5%) to be very conservative and prevent accidental deletion of quiet speech.
+        const threshold = 0.005;
+
+        // Min Duration: Silence less than this is ignored (kept as speech).
         const minSilenceDuration = 0.5; // seconds
 
         const chunks = [];

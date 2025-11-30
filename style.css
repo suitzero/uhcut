@@ -353,3 +353,28 @@ button:hover {
     font-size: 0.7rem;
     color: #888;
 }
+.tool-btn {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+}
+
+.tool-btn svg {
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+}
+
+.separator {
+    width: 1px;
+    height: 20px;
+    background: #555;
+    margin: 0 5px;
+    flex-shrink: 0;
+}

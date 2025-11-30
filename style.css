@@ -337,3 +337,19 @@ button:hover {
     background-position: center;
     border-right: 1px solid rgba(0,0,0,0.3);
 }
+.ruler-tick {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 1px;
+    background: #555;
+    pointer-events: none;
+}
+
+.ruler-tick span {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-size: 0.7rem;
+    color: #888;
+}

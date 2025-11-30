@@ -351,11 +351,20 @@ function zoom(newZoom, centerClientX) {
     const mouseX = (centerClientX || (rect.left + rect.width/2)) - rect.left;
     const timeAtMouse = (mouseX + timelineTracks.scrollLeft) / state.zoom;
 
+    const oldZoom = state.zoom;
     state.zoom = Math.max(1, Math.min(200, newZoom)); // Clamp
 
-    // Adjust scroll to keep timeAtMouse in same place
-    // newX + newScroll = timeAtMouse * newZoom
-    // newScroll = timeAtMouse * newZoom - mouseX
+    // Re-render visuals if zoom changed significantly (e.g., > 20%) to fix stretching
+    if (Math.abs(state.zoom - oldZoom) / oldZoom > 0.2) {
+        // Force redraw of thumbnails by clearing cache or removing clips?
+        // Actually, renderTimeline updates width.
+        // We can check if filmstrip container width matches clip width roughly.
+        // Or simply remove all clips from DOM to force regeneration of high-quality thumbs.
+        // For performance, we only do this on explicit zoom interaction end?
+        // But renderTimeline is smart now.
+        // Let's force clear DOM to regenerate thumbs for proper resolution.
+        document.querySelectorAll('.track').forEach(t => t.innerHTML = '');
+    }
 
     renderTimeline();
 
@@ -383,42 +392,73 @@ function addClipToTimeline(mediaItem, startTime) {
 }
 
 function renderTimeline() {
-    // Clear tracks
-    document.querySelectorAll('.track').forEach(t => t.innerHTML = '');
+    // Smart Render: Sync DOM with State instead of wipe/recreate
 
-    // Render clips
     ['video', 'audio'].forEach(type => {
         const trackEl = document.querySelector(`.track[data-type="${type}"]`);
-        state.tracks[type].forEach(clip => {
-            const el = document.createElement('div');
-            el.className = 'clip';
-            if (state.selectedClipId === clip.id) el.classList.add('selected');
-            el.dataset.clipId = clip.id;
-            el.dataset.type = type;
+        const existingEls = Array.from(trackEl.children);
+        const clips = state.tracks[type];
 
-            // Positioning
-            el.style.left = (clip.startTime * state.zoom) + 'px';
-            el.style.width = (clip.duration * state.zoom) + 'px';
+        // 1. Remove DOM elements for deleted clips
+        existingEls.forEach(el => {
+            const id = el.dataset.clipId;
+            if (!clips.find(c => c.id === id)) {
+                el.remove();
+            }
+        });
 
-            // Content
-            const media = state.media.find(m => m.id === clip.mediaId);
-            // el.textContent = media ? media.name : 'Unknown';
-            // Use inner structure for advanced visuals
+        // 2. Add or Update clips
+        clips.forEach(clip => {
+            let el = trackEl.querySelector(`.clip[data-clip-id="${clip.id}"]`);
+            const width = clip.duration * state.zoom;
+            const left = clip.startTime * state.zoom;
 
-            const label = document.createElement('span');
-            label.className = 'clip-label';
-            label.textContent = media ? media.name : 'Unknown';
-            el.appendChild(label);
+            if (!el) {
+                // Create New
+                el = document.createElement('div');
+                el.className = 'clip';
+                el.dataset.clipId = clip.id;
+                el.dataset.type = type;
 
-            if (media) {
-                if (type === 'audio') {
-                    drawWaveform(media, clip, el);
-                } else if (type === 'video') {
-                    drawVideoThumbnails(media, clip, el);
+                // Content
+                const media = state.media.find(m => m.id === clip.mediaId);
+
+                const label = document.createElement('span');
+                label.className = 'clip-label';
+                label.textContent = media ? media.name : 'Unknown';
+                el.appendChild(label);
+
+                if (media) {
+                    if (type === 'audio') {
+                        drawWaveform(media, clip, el);
+                    } else if (type === 'video') {
+                        drawVideoThumbnails(media, clip, el);
+                    }
                 }
+
+                trackEl.appendChild(el);
+            } else {
+                // Check if thumbnails need regen (zoom changed significantly?)
+                // For now just update position/selection to be fast
             }
 
-            trackEl.appendChild(el);
+            // Update Visuals
+            el.style.left = left + 'px';
+            el.style.width = width + 'px';
+
+            if (state.selectedClipId === clip.id) {
+                el.classList.add('selected');
+            } else {
+                el.classList.remove('selected');
+            }
+
+            // Note: If zoom changes, we might want to re-render thumbnails/waveforms?
+            // Currently drawVideoThumbnails uses current state.zoom.
+            // If DOM exists, we are NOT re-calling drawVideoThumbnails.
+            // This is the performance fix!
+            // BUT: If user zooms, the internal thumbs will look stretched/squashed.
+            // We should ideally re-render visuals if width changed drastically.
+            // For MVP optimization: CSS scales them.
         });
     });
 
@@ -744,13 +784,25 @@ function renderLoop(timestamp) {
     requestAnimationFrame(renderLoop);
 }
 
-playPauseBtn.addEventListener('click', () => {
-    state.isPlaying = !state.isPlaying;
-    playPauseBtn.textContent = state.isPlaying ? 'Pause' : 'Play';
-    lastTime = 0; // reset delta
+playPauseBtn.addEventListener('click', togglePlay);
 
-    // Also handle audio elements if we add them later
-});
+function togglePlay() {
+    state.isPlaying = !state.isPlaying;
+
+    // Update Icon
+    const playIcon = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>`;
+    const pauseIcon = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+    playPauseBtn.innerHTML = state.isPlaying ? pauseIcon : playIcon;
+
+    if (!state.isPlaying) {
+        mainVideo.pause();
+        // Pause all audio
+        Object.values(audioPool).forEach(a => a.pause());
+    } else {
+        // Resume handled in loop
+        lastTime = 0;
+    }
+}
 
 // Toolbar
 function setupToolbar() {
@@ -1256,49 +1308,105 @@ async function removeSilence() {
 
         if (chunks.length === 0) return alert('No speech detected or volume too low.');
 
-        // Replace the original clip with multiple clips
-        // Filter chunks that are within the clip's visible range (offset to offset + duration)
-        const validChunks = chunks.filter(chunk => {
+        // Process Speech Chunks
+        const visibleChunks = chunks.filter(chunk => {
              return chunk.end > clip.offset && chunk.start < (clip.offset + clip.duration);
         });
 
-        // --- FIX FOR BUG: "Remove silence on the voice file remove the audio clip itself" ---
-        // If the entire clip is detected as silence (validChunks is empty), validChunks.length is 0.
-        // Previously, the code would proceed to remove the original clip and add nothing, effectively deleting it.
-        // We should warn the user and abort if no valid chunks remain.
-        if (validChunks.length === 0) {
+        if (visibleChunks.length === 0) {
             return alert('No speech detected in this clip segment (it appears silent). Clip preserved.');
         }
 
-        saveState(); // Support Undo for this massive change
+        // --- TWO STEP UNDO LOGIC: 1. Split, 2. Delete Silence ---
 
-        // Remove original clip
+        // Step 1: Split into Speech AND Silence segments
+        // We need to invert the chunks to find silence gaps within the clip duration
+        const allSegments = [];
+        let cursor = clip.offset;
+        const endOfClip = clip.offset + clip.duration;
+
+        visibleChunks.forEach(chunk => {
+            // Gap before speech?
+            const gapStart = cursor;
+            const gapEnd = Math.max(cursor, chunk.start);
+            if (gapEnd > gapStart) {
+                allSegments.push({ start: gapStart, end: gapEnd, type: 'silence' });
+            }
+
+            // Speech segment
+            const speechStart = Math.max(cursor, chunk.start);
+            const speechEnd = Math.min(endOfClip, chunk.end);
+            if (speechEnd > speechStart) {
+                allSegments.push({ start: speechStart, end: speechEnd, type: 'speech' });
+            }
+
+            cursor = speechEnd;
+        });
+
+        // Tail gap?
+        if (cursor < endOfClip) {
+            allSegments.push({ start: cursor, end: endOfClip, type: 'silence' });
+        }
+
+        // Apply Step 1: Replace original clip with split parts (Speech + Silence)
+        saveState(); // Save state BEFORE splitting
+
+        // Remove original
         state.tracks[trackType] = state.tracks[trackType].filter(c => c.id !== clip.id);
 
-        // Add new clips (Speech Only)
-        // This logic collapses the gaps between speech chunks.
-
+        // Add all segments
         let currentTimelinePos = clip.startTime;
+        const newClips = [];
 
-        validChunks.forEach(chunk => {
-            // Clip chunk to the original clip boundaries (offset perspective)
-            const chunkStart = Math.max(chunk.start, clip.offset);
-            const chunkEnd = Math.min(chunk.end, clip.offset + clip.duration);
-            const duration = chunkEnd - chunkStart;
-
-            if (duration > 0.1) { // Min clip length
+        allSegments.forEach(seg => {
+            const duration = seg.end - seg.start;
+            if (duration > 0.05) { // Min clip length
                 const newClip = {
-                    id: 'chunk_' + Date.now() + Math.random(),
+                    id: 'split_' + Date.now() + Math.random(),
                     mediaId: clip.mediaId,
                     startTime: currentTimelinePos,
                     duration: duration,
-                    offset: chunkStart,
+                    offset: seg.start,
                     type: clip.type,
-                    muted: clip.muted
+                    muted: clip.muted,
+                    isSilence: (seg.type === 'silence') // Tag it
                 };
                 state.tracks[trackType].push(newClip);
+                newClips.push(newClip);
                 currentTimelinePos += duration;
             }
+        });
+
+        renderTimeline();
+
+        // Step 2: Delete Silence Clips
+        // We do this immediately, but by saving state *again*, we allow the user to undo *just* the deletion.
+
+        // Allow the UI to update first? No, synchronous is fine for history stack.
+        saveState(); // Save state WITH splits (before deleting silence)
+
+        // Filter out silence clips we just added
+        state.tracks[trackType] = state.tracks[trackType].filter(c => !c.isSilence);
+
+        // We also need to shift the remaining clips to close the gaps!
+        // "remove silence... delete no voice part clips" usually implies ripple delete (closing gaps).
+        // My previous logic did this by appending to `currentTimelinePos`.
+        // Here, if I just delete them, there will be holes.
+        // I need to reposition the remaining clips.
+
+        // Let's recalculate positions for the track
+        // Actually, to support undoing to the "split" state (where gaps exist),
+        // the "split" state should have clips contiguous.
+        // The "delete" state should have clips contiguous (rippled).
+
+        // Re-implement Step 2 logic:
+        const remainingClips = newClips.filter(c => !c.isSilence);
+        let ripplePos = clip.startTime;
+
+        // Update positions of the KEPT clips
+        remainingClips.forEach(c => {
+            c.startTime = ripplePos;
+            ripplePos += c.duration;
         });
 
         renderTimeline();

@@ -953,11 +953,34 @@ function startRecording() {
     navigator.mediaDevices.getUserMedia({ audio: true })
         .then(stream => {
             recordingStream = stream;
-            mediaRecorder = new MediaRecorder(stream);
+
+            // Check for supported MIME types (iOS compatibility)
+            const mimeTypes = [
+                'audio/mp4',
+                'audio/aac',
+                'audio/webm;codecs=opus',
+                'audio/webm'
+            ];
+
+            let options = {};
+            for (const type of mimeTypes) {
+                if (MediaRecorder.isTypeSupported(type)) {
+                    options = { mimeType: type };
+                    break;
+                }
+            }
+
+            try {
+                mediaRecorder = new MediaRecorder(stream, options);
+            } catch (e) {
+                console.warn('Failed with mime options, trying default', e);
+                mediaRecorder = new MediaRecorder(stream);
+            }
+
             audioChunks = [];
 
             mediaRecorder.ondataavailable = e => {
-                audioChunks.push(e.data);
+                if (e.data.size > 0) audioChunks.push(e.data);
             };
 
             mediaRecorder.start();
@@ -970,7 +993,10 @@ function startRecording() {
             source.connect(analyser);
             visualizeRecording();
         })
-        .catch(err => console.error('Error accessing microphone:', err));
+        .catch(err => {
+            console.error('Error accessing microphone:', err);
+            alert('Could not access microphone. Please check permissions and ensure you are using HTTPS or localhost.');
+        });
 }
 
 function visualizeRecording() {
@@ -1260,31 +1286,35 @@ async function removeSilence() {
         const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-        // Analyze channel data
-        const rawData = audioBuffer.getChannelData(0); // Use first channel
+        // Analyze channel data (Check ALL channels for stereo safety)
+        const channels = [];
+        for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+            channels.push(audioBuffer.getChannelData(c));
+        }
+
         const sampleRate = audioBuffer.sampleRate;
+        const length = channels[0].length;
 
         // --- REVIEW: Silence Detection Logic ---
         // Threshold: Amplitude below this is considered silence.
-        // Lowered to 0.005 (0.5%) to be very conservative and prevent accidental deletion of quiet speech.
         const threshold = 0.005;
-
-        // Min Duration: Silence less than this is ignored (kept as speech).
         const minSilenceDuration = 0.5; // seconds
 
         const chunks = [];
         let isSilent = true;
         let lastChangeIndex = 0;
 
-        for (let i = 0; i < rawData.length; i++) {
-            const amplitude = Math.abs(rawData[i]);
+        for (let i = 0; i < length; i++) {
+            // Get max amplitude across all channels
+            let amplitude = 0;
+            for (let c = 0; c < channels.length; c++) {
+                const val = Math.abs(channels[c][i]);
+                if (val > amplitude) amplitude = val;
+            }
+
             if (amplitude > threshold) {
                 if (isSilent) {
                     // Silence ended
-                    const silenceDuration = (i - lastChangeIndex) / sampleRate;
-                    if (silenceDuration > minSilenceDuration) {
-                         // Record silence block if needed, but we want to record SPEECH blocks
-                    }
                     isSilent = false;
                     lastChangeIndex = i;
                 }
@@ -1303,7 +1333,7 @@ async function removeSilence() {
         }
         // Handle last chunk
         if (!isSilent) {
-             chunks.push({ start: lastChangeIndex / sampleRate, end: rawData.length / sampleRate });
+             chunks.push({ start: lastChangeIndex / sampleRate, end: length / sampleRate });
         }
 
         if (chunks.length === 0) return alert('No speech detected or volume too low.');

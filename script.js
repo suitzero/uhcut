@@ -415,6 +415,9 @@ function renderTimeline() {
                 el.className = 'clip';
                 el.dataset.clipId = clip.id;
                 el.dataset.type = type;
+                // Store stats for smart update checks
+                el.dataset.renderedDuration = clip.duration;
+                el.dataset.renderedOffset = clip.offset;
 
                 // Content
                 const media = state.media.find(m => m.id === clip.mediaId);
@@ -434,8 +437,34 @@ function renderTimeline() {
 
                 trackEl.appendChild(el);
             } else {
-                // Check if thumbnails need regen (zoom changed significantly?)
-                // For now just update position/selection to be fast
+                // Check if internal Visuals need Regen (e.g. Split or Resize)
+                // If duration or offset changed, the bitmap must be redrawn or it stretches incorrect data
+                const oldDuration = parseFloat(el.dataset.renderedDuration);
+                const oldOffset = parseFloat(el.dataset.renderedOffset);
+
+                // Tolerance for float comparison
+                if (Math.abs(oldDuration - clip.duration) > 0.01 || Math.abs(oldOffset - clip.offset) > 0.01) {
+                    // Update stats
+                    el.dataset.renderedDuration = clip.duration;
+                    el.dataset.renderedOffset = clip.offset;
+
+                    // Clear and Re-render visuals
+                    el.innerHTML = '';
+
+                    const media = state.media.find(m => m.id === clip.mediaId);
+                    const label = document.createElement('span');
+                    label.className = 'clip-label';
+                    label.textContent = media ? media.name : 'Unknown';
+                    el.appendChild(label);
+
+                    if (media) {
+                        if (type === 'audio') {
+                            drawWaveform(media, clip, el);
+                        } else if (type === 'video') {
+                            drawVideoThumbnails(media, clip, el);
+                        }
+                    }
+                }
             }
 
             // Update Visuals
@@ -447,14 +476,6 @@ function renderTimeline() {
             } else {
                 el.classList.remove('selected');
             }
-
-            // Note: If zoom changes, we might want to re-render thumbnails/waveforms?
-            // Currently drawVideoThumbnails uses current state.zoom.
-            // If DOM exists, we are NOT re-calling drawVideoThumbnails.
-            // This is the performance fix!
-            // BUT: If user zooms, the internal thumbs will look stretched/squashed.
-            // We should ideally re-render visuals if width changed drastically.
-            // For MVP optimization: CSS scales them.
         });
     });
 

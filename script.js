@@ -356,14 +356,10 @@ function zoom(newZoom, centerClientX) {
 
     // Re-render visuals if zoom changed significantly (e.g., > 20%) to fix stretching
     if (Math.abs(state.zoom - oldZoom) / oldZoom > 0.2) {
-        // Force redraw of thumbnails by clearing cache or removing clips?
-        // Actually, renderTimeline updates width.
-        // We can check if filmstrip container width matches clip width roughly.
-        // Or simply remove all clips from DOM to force regeneration of high-quality thumbs.
-        // For performance, we only do this on explicit zoom interaction end?
-        // But renderTimeline is smart now.
-        // Let's force clear DOM to regenerate thumbs for proper resolution.
         document.querySelectorAll('.track').forEach(t => t.innerHTML = '');
+
+        // Performance: Clear queue if zooming, old thumbs are likely wrong resolution/density
+        thumbQueue.length = 0;
     }
 
     renderTimeline();
@@ -596,11 +592,41 @@ function drawVideoThumbnails(media, clip, container) {
         document.body.appendChild(sharedThumbVideo);
     }
 
+    // Performance: Only render thumbnails if visible in viewport
+    // Calculate clip's left and right in container
+    // We don't have exact DOM rects here easily without querying, but we know logical position
+    const containerScroll = timelineTracks.parentElement.scrollLeft;
+    const containerWidth = timelineTracks.parentElement.clientWidth;
+    const clipLeft = clip.startTime * state.zoom;
+    const clipRight = (clip.startTime + clip.duration) * state.zoom;
+
+    // Simple check: is clip visible?
+    if (clipRight < containerScroll || clipLeft > containerScroll + containerWidth) {
+        // Clip not visible, skip generating thumbnails
+        return;
+    }
+
     for (let i = 0; i < numThumbs; i++) {
+        const thumbOffset = i * thumbWidth;
+        const thumbAbsLeft = clipLeft + thumbOffset;
+
+        // Visibility Check Per Thumbnail (Optimization)
+        // Only generate/append if this specific thumbnail segment is visible
+        if (thumbAbsLeft + thumbWidth < containerScroll || thumbAbsLeft > containerScroll + containerWidth) {
+            continue;
+        }
+
         const thumbTime = clip.offset + (i * (clip.duration / numThumbs));
         const thumbDiv = document.createElement('div');
         thumbDiv.className = 'video-thumb';
         thumbDiv.style.width = thumbWidth + 'px';
+        // Absolute position within strip if we skipped some? No, strip is flex.
+        // If we skip, flex layout breaks. We must position absolutely or fill gaps.
+        // Easier: Use absolute positioning for thumbs inside strip.
+        thumbDiv.style.position = 'absolute';
+        thumbDiv.style.left = thumbOffset + 'px';
+        thumbDiv.style.height = '100%';
+
         strip.appendChild(thumbDiv);
 
         // Check cache first
@@ -608,8 +634,7 @@ function drawVideoThumbnails(media, clip, container) {
         if (thumbnailCache[cacheKey]) {
             thumbDiv.style.backgroundImage = `url(${thumbnailCache[cacheKey]})`;
         } else {
-             // Request generation (throttled/queued ideally, but for now direct)
-             // We clone logic inside captureThumbnail to be safe
+             // Request generation
              captureThumbnail(media.url, thumbTime, cacheKey).then(url => {
                 if (url) thumbDiv.style.backgroundImage = `url(${url})`;
             });
@@ -629,10 +654,23 @@ function captureThumbnail(url, time, cacheKey) {
 }
 
 function processThumbQueue() {
+    // 1. Performance Guard: Don't process thumbnails while playing video
+    if (state.isPlaying) {
+        // Retry later
+        setTimeout(processThumbQueue, 500);
+        return;
+    }
+
     if (isProcessingThumbs || thumbQueue.length === 0) return;
     isProcessingThumbs = true;
 
     const task = thumbQueue.shift();
+
+    // 2. Queue Optimization: If queue gets too huge (>50), drop old frames to catch up
+    if (thumbQueue.length > 50) {
+        // Keep the last 20 (most likely to be visible/recent)
+        thumbQueue.splice(0, thumbQueue.length - 20);
+    }
 
     if (sharedThumbVideo.src !== task.url) {
         sharedThumbVideo.src = task.url;
@@ -643,8 +681,8 @@ function processThumbQueue() {
 
     const onSeek = () => {
         const canvas = document.createElement('canvas');
-        canvas.width = 160; // low res
-        canvas.height = 90;
+        canvas.width = 80; // Reduced res for better performance (was 160)
+        canvas.height = 45;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(sharedThumbVideo, 0, 0, canvas.width, canvas.height);
         const dataURL = canvas.toDataURL();
@@ -658,11 +696,21 @@ function processThumbQueue() {
         // Next
         if (thumbQueue.length > 0) {
             // Small delay to let UI breathe
-            setTimeout(processThumbQueue, 10);
+            setTimeout(processThumbQueue, 10); // 10ms
         }
     };
 
+    // 3. Error Handling for seek failure
+    const onError = () => {
+        sharedThumbVideo.removeEventListener('seeked', onSeek);
+        sharedThumbVideo.removeEventListener('error', onError);
+        isProcessingThumbs = false;
+        task.resolve(null); // Resolve with nothing
+        setTimeout(processThumbQueue, 10);
+    };
+
     sharedThumbVideo.addEventListener('seeked', onSeek, { once: true });
+    sharedThumbVideo.addEventListener('error', onError, { once: true });
 }
 
 function selectClip(id) {

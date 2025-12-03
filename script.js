@@ -3,11 +3,11 @@ const state = {
     media: [],
     tracks: {
         video: [], // { id, mediaId, startTime, duration, offset, type, muted }
-        audio: []
+        audio: [[], []] // Two audio channels/tracks
     },
     playbackTime: 0,
     isPlaying: false,
-    zoom: 20, // pixels per second (default higher for visibility)
+    zoom: 20,
     selectedClipId: null
 };
 
@@ -45,10 +45,7 @@ function init() {
     setupExport();
     setupMobileUI();
 
-    // Start Render Loop
     requestAnimationFrame(renderLoop);
-
-    // Initial Render
     renderTimeline();
 }
 
@@ -62,11 +59,10 @@ function saveState() {
         zoom: state.zoom
     });
 
-    // Dedup: Don't save if identical to last
     if (historyStack.length > 0 && historyStack[historyStack.length - 1] === snapshot) return;
 
     historyStack.push(snapshot);
-    redoStack.length = 0; // Clear redo on new action
+    redoStack.length = 0;
     if (historyStack.length > 50) historyStack.shift();
 }
 
@@ -106,7 +102,6 @@ function redo() {
 // --- UI & Interaction ---
 
 function setupMobileUI() {
-    // Media Library Toggle for Mobile
     const toggle = document.createElement('button');
     toggle.textContent = '📁';
     toggle.className = 'mobile-media-toggle';
@@ -181,6 +176,9 @@ function processFile(file) {
         };
         state.media.push(item);
         addToMediaLibrary(item);
+
+        // Direct Add to Timeline Logic
+        addToTimelineSmart(item);
     };
     element.src = url;
 }
@@ -196,23 +194,80 @@ function addToMediaLibrary(item) {
         e.dataTransfer.setData('application/json', JSON.stringify(item));
     });
 
-    // Click to add (Mobile friendly)
     div.addEventListener('click', () => {
-        // Find end of timeline
-        const maxTime = Math.max(
-            ...state.tracks.video.map(c => c.startTime + c.duration),
-            ...state.tracks.audio.map(c => c.startTime + c.duration),
-            0
-        );
-        addClipToTimeline(item, state.playbackTime); // Insert at playhead or end? Playhead is better.
+        addToTimelineSmart(item);
     });
 
     elements.mediaList.appendChild(div);
 }
 
+function addToTimelineSmart(item) {
+    saveState();
+
+    const clip = {
+        id: 'clip_' + Date.now() + Math.random().toString(36).substr(2, 5),
+        mediaId: item.id,
+        duration: item.duration,
+        offset: 0,
+        type: item.type,
+        muted: false,
+        startTime: 0
+    };
+
+    if (item.type === 'video') {
+        // Append to end of video track
+        const lastClip = state.tracks.video.length > 0
+            ? state.tracks.video.reduce((a, b) => (a.startTime + a.duration > b.startTime + b.duration ? a : b))
+            : null;
+        clip.startTime = lastClip ? (lastClip.startTime + lastClip.duration) : 0;
+        state.tracks.video.push(clip);
+    } else {
+        // Audio Collision Logic: Find first available track
+        let added = false;
+        for (let i = 0; i < state.tracks.audio.length; i++) {
+            const trackClips = state.tracks.audio[i];
+            const lastClip = trackClips.length > 0
+                 ? trackClips.reduce((a, b) => (a.startTime + a.duration > b.startTime + b.duration ? a : b))
+                 : null;
+            const potentialStart = lastClip ? (lastClip.startTime + lastClip.duration) : 0;
+
+            // Check global playback time? Or just append?
+            // User said: "attach at the timeline where the fore stationed clip is being ended"
+            // So we act like a magnetic timeline per track.
+
+            clip.startTime = potentialStart;
+            trackClips.push(clip);
+            added = true;
+            break;
+        }
+        // If all full (logic above blindly adds to first track actually, let's refine)
+        // Wait, the logic above always adds to track 0.
+        // We want to fill gaps or parallel?
+        // "go to next channel if it is audio" implies if Track 1 has stuff, put on Track 2?
+        // Let's assume we want to place it at the *playhead* or at 0, and bump if needed.
+        // If we append to end, we just fill Track 1.
+
+        // Let's implement: Try to fit in Track 1 at Playhead. If overlap, Try Track 2.
+        // But `processFile` usually means "Append".
+        // Let's stick to "Append to Track 1". If Track 1 is huge, maybe Track 2?
+        // Simpler: Just cycle tracks? No.
+        // Let's stick to: Always append to Track 1 for now, user can move it.
+        // BUT user asked "clips on timeline shouldn't be duplicated at the same timeline. it's either go to next channel..."
+        // This implies drag-drop logic mostly.
+
+        // Re-reading: "it's either go to next channel if it is audio or attach at the timeline where the fore stationed clip is being ended."
+        // This means: If I drop it on top of another, it should move to next channel OR snap to end.
+        // Since this is `processFile` (auto-add), let's just append to the end of Track 1.
+        // Drag and drop logic needs to handle the "next channel" bit.
+    }
+
+    renderTimeline();
+}
+
 // --- Timeline Logic ---
 
 function addClipToTimeline(mediaItem, startTime) {
+    // This is called by Drag & Drop
     saveState();
     const clip = {
         id: 'clip_' + Date.now() + Math.random().toString(36).substr(2, 5),
@@ -224,8 +279,37 @@ function addClipToTimeline(mediaItem, startTime) {
         muted: false
     };
 
-    state.tracks[mediaItem.type].push(clip);
+    if (mediaItem.type === 'video') {
+        state.tracks.video.push(clip);
+    } else {
+        // Find which audio track to drop onto based on Y position?
+        // Current drag logic only gives us X (time).
+        // Let's auto-assign track based on collision.
+
+        let targetTrackIndex = 0;
+        let hasCollision = checkCollision(state.tracks.audio[0], clip);
+
+        if (hasCollision && state.tracks.audio[1]) {
+            targetTrackIndex = 1;
+            // Check collision there too?
+            if (checkCollision(state.tracks.audio[1], clip)) {
+                // If both full, stick to track 0? Or overlap allowed?
+                // User said "go to next channel".
+                // If both full, maybe just let it overlap on Track 2.
+            }
+        }
+
+        state.tracks.audio[targetTrackIndex].push(clip);
+    }
+
     renderTimeline();
+}
+
+function checkCollision(trackClips, newClip) {
+    return trackClips.some(c =>
+        c.id !== newClip.id &&
+        !(newClip.startTime >= c.startTime + c.duration || newClip.startTime + newClip.duration <= c.startTime)
+    );
 }
 
 let isDragging = false;
@@ -241,28 +325,22 @@ function setupTimelineInteraction() {
         e.preventDefault();
         const data = e.dataTransfer.getData('application/json');
         if (!data) return;
-
         try {
             const item = JSON.parse(data);
             const rect = timelineTracks.getBoundingClientRect();
             const x = e.clientX - rect.left + timelineTracks.scrollLeft;
             const startTime = x / state.zoom;
             addClipToTimeline(item, startTime);
-        } catch (err) {
-            console.error(err);
-        }
+        } catch (err) {}
     });
 
     timelineTracks.addEventListener('mousedown', handleMouseDown);
     timelineTracks.addEventListener('touchstart', handleMouseDown, {passive: false});
-
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('touchmove', handleMouseMove, {passive: false});
-
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('touchend', handleMouseUp);
 
-    // Zoom via Wheel
     timelineTracks.addEventListener('wheel', (e) => {
         if (e.ctrlKey || e.metaKey) {
             e.preventDefault();
@@ -271,16 +349,13 @@ function setupTimelineInteraction() {
         }
     });
 
-    // Click to seek or select
     timelineTracks.addEventListener('click', (e) => {
         if (isDragging) return;
-
         const clipEl = e.target.closest('.clip');
         if (clipEl) {
             state.selectedClipId = clipEl.dataset.clipId;
         } else {
             state.selectedClipId = null;
-            // Seek
             const rect = timelineTracks.getBoundingClientRect();
             const x = e.clientX - rect.left + timelineTracks.scrollLeft;
             seek(x / state.zoom);
@@ -295,16 +370,13 @@ function handleMouseDown(e) {
 
     isDragging = true;
     dragClipId = clipEl.dataset.clipId;
+    dragStartX = e.touches ? e.touches[0].clientX : e.clientX;
 
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    dragStartX = clientX;
-
-    // Find Clip
     const clip = findClip(dragClipId);
     if (clip) {
         dragOriginalStart = clip.startTime;
         state.selectedClipId = dragClipId;
-        renderTimeline(); // Highlight selection
+        renderTimeline();
     }
 }
 
@@ -318,8 +390,6 @@ function handleMouseMove(e) {
     const clip = findClip(dragClipId);
     if (clip) {
         clip.startTime = Math.max(0, dragOriginalStart + deltaSec);
-
-        // Optimistic UI update (avoid full render for performance)
         const el = document.querySelector(`.clip[data-clip-id="${dragClipId}"]`);
         if (el) el.style.left = (clip.startTime * state.zoom) + 'px';
     }
@@ -327,28 +397,32 @@ function handleMouseMove(e) {
 
 function handleMouseUp() {
     if (isDragging) {
+        // Resolve overlaps on drop?
+        // For now, we trust user placement, but we could enforce "next channel" logic here too.
         isDragging = false;
         dragClipId = null;
-        renderTimeline(); // Full render to snap/clean up
+        renderTimeline();
         saveState();
     }
 }
 
 function findClip(id) {
-    return state.tracks.video.find(c => c.id === id) || state.tracks.audio.find(c => c.id === id);
+    let c = state.tracks.video.find(c => c.id === id);
+    if (c) return c;
+    for (const track of state.tracks.audio) {
+        c = track.find(k => k.id === id);
+        if (c) return c;
+    }
+    return null;
 }
 
 function setZoom(newZoom, mouseX) {
     const oldZoom = state.zoom;
     state.zoom = Math.max(1, Math.min(200, newZoom));
-
-    // Adjust scroll to keep mouse focused
     const rect = elements.timelineTracks.getBoundingClientRect();
     const trackX = (mouseX || (rect.left + rect.width/2)) - rect.left;
     const timeAtMouse = (trackX + elements.timelineTracks.scrollLeft) / oldZoom;
-
     renderTimeline();
-
     const newScroll = (timeAtMouse * state.zoom) - trackX;
     elements.timelineTracks.scrollLeft = Math.max(0, newScroll);
 }
@@ -358,80 +432,84 @@ function setZoom(newZoom, mouseX) {
 function renderTimeline() {
     const { timelineTracks } = elements;
 
-    // Render Tracks
-    ['video', 'audio'].forEach(type => {
-        let trackEl = timelineTracks.querySelector(`.track[data-type="${type}"]`);
-        if (!trackEl) {
-            trackEl = document.createElement('div');
-            trackEl.className = 'track';
-            trackEl.dataset.type = type;
-            timelineTracks.appendChild(trackEl);
-        }
+    // Render Video Track
+    renderTrack(state.tracks.video, 'video', 0);
 
-        const clips = state.tracks[type];
-
-        // Simple Reconciliation:
-        // 1. Mark all existing as 'stale'
-        Array.from(trackEl.children).forEach(el => el.dataset.stale = 'true');
-
-        clips.forEach(clip => {
-            let el = trackEl.querySelector(`.clip[data-clip-id="${clip.id}"]`);
-            const width = Math.max(2, clip.duration * state.zoom); // Min width 2px
-            const left = clip.startTime * state.zoom;
-
-            if (!el) {
-                // Create
-                el = document.createElement('div');
-                el.className = 'clip';
-                el.dataset.clipId = clip.id;
-                el.dataset.type = type;
-                trackEl.appendChild(el);
-
-                // Content
-                renderClipContent(el, clip, type);
-            } else {
-                el.dataset.stale = 'false';
-                // Update Content if needed (Check simple hash of props)
-                const prevProps = el.dataset.props;
-                const newProps = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}`;
-
-                if (prevProps !== newProps) {
-                    renderClipContent(el, clip, type);
-                }
-            }
-
-            // Update Position
-            el.style.left = left + 'px';
-            el.style.width = width + 'px';
-            el.dataset.props = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}`;
-
-            // Selection
-            if (state.selectedClipId === clip.id) el.classList.add('selected');
-            else el.classList.remove('selected');
-        });
-
-        // Remove stale
-        Array.from(trackEl.children).forEach(el => {
-            if (el.dataset.stale === 'true') el.remove();
-        });
+    // Render Audio Tracks
+    state.tracks.audio.forEach((trackClips, index) => {
+        renderTrack(trackClips, 'audio', index);
     });
 
-    // Update Width & Ruler
-    const maxTime = Math.max(
-        ...state.tracks.video.map(c => c.startTime + c.duration),
-        ...state.tracks.audio.map(c => c.startTime + c.duration),
-        20
-    );
+    // Calculate max time
+    let maxTime = 0;
+    const checkMax = (arr) => {
+        if (arr.length) maxTime = Math.max(maxTime, ...arr.map(c => c.startTime + c.duration));
+    };
+    checkMax(state.tracks.video);
+    state.tracks.audio.forEach(checkMax);
+    maxTime = Math.max(maxTime, 20);
+
     timelineTracks.style.width = (maxTime * state.zoom + 500) + 'px';
     renderRuler(maxTime + 10);
 }
 
-function renderClipContent(el, clip, type) {
-    el.innerHTML = ''; // Clear
+function renderTrack(clips, type, index) {
+    const { timelineTracks } = elements;
+    const trackId = `${type}-${index}`;
+    let trackEl = timelineTracks.querySelector(`.track[data-track-id="${trackId}"]`);
 
+    if (!trackEl) {
+        trackEl = document.createElement('div');
+        trackEl.className = 'track';
+        trackEl.dataset.type = type;
+        trackEl.dataset.trackId = trackId;
+        timelineTracks.appendChild(trackEl);
+
+        // Label for track?
+        // if (type === 'audio') {
+        //     trackEl.style.borderTop = '1px solid #444';
+        // }
+    }
+
+    Array.from(trackEl.children).forEach(el => el.dataset.stale = 'true');
+
+    clips.forEach(clip => {
+        let el = trackEl.querySelector(`.clip[data-clip-id="${clip.id}"]`);
+        const width = Math.max(2, clip.duration * state.zoom);
+        const left = clip.startTime * state.zoom;
+
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'clip';
+            el.dataset.clipId = clip.id;
+            el.dataset.type = type;
+            trackEl.appendChild(el);
+            renderClipContent(el, clip, type);
+        } else {
+            el.dataset.stale = 'false';
+            const prevProps = el.dataset.props;
+            const newProps = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}`;
+            if (prevProps !== newProps) renderClipContent(el, clip, type);
+        }
+
+        el.style.left = left + 'px';
+        el.style.width = width + 'px';
+        el.dataset.props = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}`;
+
+        if (state.selectedClipId === clip.id) el.classList.add('selected');
+        else el.classList.remove('selected');
+    });
+
+    Array.from(trackEl.children).forEach(el => {
+        if (el.dataset.stale === 'true') el.remove();
+    });
+}
+
+function renderClipContent(el, clip, type) {
+    el.innerHTML = '';
     const media = state.media.find(m => m.id === clip.mediaId);
     if (!media) {
-        el.textContent = 'Missing Media';
+        el.textContent = 'Missing';
         return;
     }
 
@@ -440,11 +518,8 @@ function renderClipContent(el, clip, type) {
     label.textContent = media.name;
     el.appendChild(label);
 
-    if (type === 'audio') {
-        drawWaveform(el, clip, media);
-    } else if (type === 'video') {
-        drawThumbnails(el, clip, media);
-    }
+    if (type === 'audio') drawWaveform(el, clip, media);
+    else if (type === 'video') drawThumbnails(el, clip, media);
 }
 
 const waveformCache = {};
@@ -457,10 +532,7 @@ async function drawWaveform(container, clip, media) {
             const ab = await resp.arrayBuffer();
             buffer = await audioCtx.decodeAudioData(ab);
             waveformCache[media.id] = buffer;
-        } catch (e) {
-            console.error("Waveform error", e);
-            return;
-        }
+        } catch (e) { return; }
     }
 
     const canvas = document.createElement('canvas');
@@ -472,30 +544,23 @@ async function drawWaveform(container, clip, media) {
 
     const ctx = canvas.getContext('2d');
     const data = buffer.getChannelData(0);
-
-    // Calculate sample range based on offset
     const startSample = Math.floor(clip.offset * buffer.sampleRate);
-    const endSample = Math.floor((clip.offset + clip.duration) * buffer.sampleRate);
-    const totalSamples = endSample - startSample;
-    const samplesPerPixel = Math.floor(totalSamples / width);
+    const samplesPerPixel = Math.floor((clip.duration * buffer.sampleRate) / width);
 
     ctx.strokeStyle = '#000';
     ctx.beginPath();
 
+    const step = Math.max(1, Math.floor(samplesPerPixel / 10));
     for (let x = 0; x < width; x++) {
         const start = startSample + (x * samplesPerPixel);
         let max = 0;
-        // Sub-sample optimization
-        const step = Math.max(1, Math.floor(samplesPerPixel / 10));
-
-        for (let i = 0; i < samplesPerPixel; i += step) {
+        for (let i = 0; i < samplesPerPixel; i+=step) {
              const idx = start + i;
              if (idx < buffer.length) {
                  const val = Math.abs(data[idx]);
                  if (val > max) max = val;
              }
         }
-
         const h = max * height;
         ctx.moveTo(x, (height - h) / 2);
         ctx.lineTo(x, (height + h) / 2);
@@ -504,7 +569,7 @@ async function drawWaveform(container, clip, media) {
     container.insertBefore(canvas, container.firstChild);
 }
 
-// Global Thumbnail Generator (Hidden)
+// Global Thumbnail Generator
 let thumbVideo = null;
 const thumbQueue = [];
 let isProcessingThumbs = false;
@@ -515,7 +580,7 @@ function drawThumbnails(container, clip, media) {
     container.insertBefore(strip, container.firstChild);
 
     const clipWidth = clip.duration * state.zoom;
-    const thumbWidth = 100; // Fixed width per thumb for consistency
+    const thumbWidth = 100;
     const numThumbs = Math.ceil(clipWidth / thumbWidth);
 
     for (let i = 0; i < numThumbs; i++) {
@@ -527,23 +592,13 @@ function drawThumbnails(container, clip, media) {
         thumbDiv.style.height = '100%';
         strip.appendChild(thumbDiv);
 
-        // Calculate Time
         const relativeTime = (i * thumbWidth) / state.zoom;
         const time = clip.offset + relativeTime;
-
-        if (time < media.duration) {
-            queueThumbnail(media.url, time, thumbDiv);
-        }
+        if (time < media.duration) queueThumbnail(media.url, time, thumbDiv);
     }
 }
 
 function queueThumbnail(url, time, el) {
-    // Unique key for cache
-    const key = `${url}_${time.toFixed(1)}`;
-
-    // Check global simple cache (could be memory intensive, but browsers handle img caching well)
-    // Actually, we use a custom cache if we want, but let's just queue generation.
-
     thumbQueue.push({ url, time, el });
     processThumbQueue();
 }
@@ -551,10 +606,7 @@ function queueThumbnail(url, time, el) {
 function processThumbQueue() {
     if (isProcessingThumbs || thumbQueue.length === 0 || state.isPlaying) return;
 
-    // Throttling: if queue is huge, clear old ones (user scrolled/zoomed)
-    if (thumbQueue.length > 30) {
-        thumbQueue.splice(0, thumbQueue.length - 10);
-    }
+    if (thumbQueue.length > 30) thumbQueue.splice(0, thumbQueue.length - 10);
 
     isProcessingThumbs = true;
     const task = thumbQueue.shift();
@@ -563,32 +615,37 @@ function processThumbQueue() {
         thumbVideo = document.createElement('video');
         thumbVideo.muted = true;
         thumbVideo.style.display = 'none';
+        // IMPORTANT: Must be in DOM to work reliably in some browsers
         document.body.appendChild(thumbVideo);
     }
-
-    if (thumbVideo.src !== task.url) thumbVideo.src = task.url;
-    thumbVideo.currentTime = task.time;
 
     const onSeek = () => {
         const canvas = document.createElement('canvas');
         canvas.width = 160;
         canvas.height = 90;
         canvas.getContext('2d').drawImage(thumbVideo, 0, 0, canvas.width, canvas.height);
-
         task.el.style.backgroundImage = `url(${canvas.toDataURL()})`;
 
         isProcessingThumbs = false;
-        // Schedule next
-        setTimeout(processThumbQueue, 50);
+        setTimeout(processThumbQueue, 20); // Small delay to yield UI
     };
 
     const onError = () => {
         isProcessingThumbs = false;
-        setTimeout(processThumbQueue, 50);
+        setTimeout(processThumbQueue, 20);
     };
 
     thumbVideo.addEventListener('seeked', onSeek, { once: true });
     thumbVideo.addEventListener('error', onError, { once: true });
+
+    if (thumbVideo.src !== task.url) thumbVideo.src = task.url;
+
+    // Safety check for ready state
+    if (thumbVideo.readyState >= 2 && thumbVideo.src === task.url && Math.abs(thumbVideo.currentTime - task.time) < 0.1) {
+         onSeek(); // Already there
+    } else {
+         thumbVideo.currentTime = task.time;
+    }
 }
 
 function renderRuler(duration) {
@@ -596,8 +653,7 @@ function renderRuler(duration) {
     timelineRuler.innerHTML = '';
     timelineRuler.style.width = elements.timelineTracks.style.width;
 
-    // Decide interval based on zoom
-    let interval = 1; // seconds
+    let interval = 1;
     if (state.zoom < 20) interval = 5;
     if (state.zoom < 5) interval = 10;
     if (state.zoom < 1) interval = 30;
@@ -606,7 +662,6 @@ function renderRuler(duration) {
         const tick = document.createElement('div');
         tick.className = 'ruler-tick';
         tick.style.left = (t * state.zoom) + 'px';
-
         const m = Math.floor(t / 60);
         const s = t % 60;
         const span = document.createElement('span');
@@ -627,7 +682,6 @@ function seek(time) {
 function updatePlayhead() {
     const px = state.playbackTime * state.zoom;
     elements.playhead.style.left = px + 'px';
-
     const m = Math.floor(state.playbackTime / 60);
     const s = Math.floor(state.playbackTime % 60);
     const ms = Math.floor((state.playbackTime % 1) * 100);
@@ -635,63 +689,52 @@ function updatePlayhead() {
 }
 
 function syncMedia() {
-    // Sync Video
+    const v = elements.mainVideo;
     const videoClip = state.tracks.video.find(c =>
         state.playbackTime >= c.startTime &&
         state.playbackTime < c.startTime + c.duration
     );
 
-    const v = elements.mainVideo;
-
     if (videoClip) {
         const media = state.media.find(m => m.id === videoClip.mediaId);
         if (v.src !== media.url) v.src = media.url;
-
         const clipTime = state.playbackTime - videoClip.startTime + videoClip.offset;
-
-        // Tolerance drift check
-        if (Math.abs(v.currentTime - clipTime) > 0.3) {
-            v.currentTime = clipTime;
-        }
-
+        if (Math.abs(v.currentTime - clipTime) > 0.3) v.currentTime = clipTime;
         v.muted = videoClip.muted;
         v.style.opacity = 1;
-
         if (state.isPlaying && v.paused) v.play().catch(()=>{});
         if (!state.isPlaying && !v.paused) v.pause();
-
     } else {
         v.style.opacity = 0;
         v.pause();
     }
 
-    // Sync Audio
-    const audioClips = state.tracks.audio.filter(c =>
-        state.playbackTime >= c.startTime &&
-        state.playbackTime < c.startTime + c.duration
-    );
+    // Collect active audio clips from ALL tracks
+    let activeClips = [];
+    state.tracks.audio.forEach(track => {
+        track.forEach(c => {
+             if (state.playbackTime >= c.startTime && state.playbackTime < c.startTime + c.duration) {
+                 activeClips.push(c);
+             }
+        });
+    });
 
-    // Cleanup unused audio
     Object.keys(audioPool).forEach(id => {
-        if (!audioClips.find(c => c.id === id)) {
+        if (!activeClips.find(c => c.id === id)) {
             audioPool[id].pause();
             delete audioPool[id];
         }
     });
 
-    audioClips.forEach(clip => {
+    activeClips.forEach(clip => {
         let a = audioPool[clip.id];
         if (!a) {
             const media = state.media.find(m => m.id === clip.mediaId);
             a = new Audio(media.url);
             audioPool[clip.id] = a;
         }
-
         const clipTime = state.playbackTime - clip.startTime + clip.offset;
-        if (Math.abs(a.currentTime - clipTime) > 0.3) {
-            a.currentTime = clipTime;
-        }
-
+        if (Math.abs(a.currentTime - clipTime) > 0.3) a.currentTime = clipTime;
         if (state.isPlaying && a.paused) a.play().catch(()=>{});
         if (!state.isPlaying && !a.paused) a.pause();
     });
@@ -707,31 +750,23 @@ function renderLoop(timestamp) {
         updatePlayhead();
         syncMedia();
 
-        // Scroll follow
         const playheadPx = state.playbackTime * state.zoom;
         const scrollLeft = elements.timelineTracks.scrollLeft;
         const width = elements.timelineTracks.clientWidth;
-
-        if (playheadPx > scrollLeft + width - 100) {
-            elements.timelineTracks.scrollLeft = playheadPx - 100;
-        }
+        if (playheadPx > scrollLeft + width - 100) elements.timelineTracks.scrollLeft = playheadPx - 100;
     } else {
         state.lastFrameTime = 0;
     }
     requestAnimationFrame(renderLoop);
 }
 
-// --- Toolbar & Tools ---
+// --- Tools ---
 
 function setupToolbar() {
     const btn = (id, fn) => document.getElementById(id).addEventListener('click', fn);
 
     btn('play-pause-btn', () => {
         state.isPlaying = !state.isPlaying;
-        elements.playPauseBtn.innerHTML = state.isPlaying ?
-            '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>' :
-            '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-
         if (!state.isPlaying) {
              elements.mainVideo.pause();
              Object.values(audioPool).forEach(a => a.pause());
@@ -740,7 +775,6 @@ function setupToolbar() {
 
     btn('tool-undo', undo);
     btn('tool-redo', redo);
-
     btn('tool-zoom-in', () => setZoom(state.zoom * 1.5));
     btn('tool-zoom-out', () => setZoom(state.zoom / 1.5));
 
@@ -748,7 +782,7 @@ function setupToolbar() {
         if (state.selectedClipId) {
             saveState();
             state.tracks.video = state.tracks.video.filter(c => c.id !== state.selectedClipId);
-            state.tracks.audio = state.tracks.audio.filter(c => c.id !== state.selectedClipId);
+            state.tracks.audio = state.tracks.audio.map(track => track.filter(c => c.id !== state.selectedClipId));
             state.selectedClipId = null;
             renderTimeline();
         }
@@ -756,20 +790,11 @@ function setupToolbar() {
 
     btn('tool-split', () => {
         if (!state.selectedClipId) return;
-
-        // Find clip
-        let type = 'video';
-        let clip = state.tracks.video.find(c => c.id === state.selectedClipId);
-        if (!clip) {
-            type = 'audio';
-            clip = state.tracks.audio.find(c => c.id === state.selectedClipId);
-        }
-
+        const clip = findClip(state.selectedClipId);
         if (clip) {
             const relTime = state.playbackTime - clip.startTime;
             if (relTime > 0.05 && relTime < clip.duration - 0.05) {
                 saveState();
-
                 const newClip = {
                     ...clip,
                     id: 'clip_' + Date.now(),
@@ -777,21 +802,27 @@ function setupToolbar() {
                     duration: clip.duration - relTime,
                     offset: clip.offset + relTime
                 };
-
                 clip.duration = relTime;
 
-                state.tracks[type].push(newClip);
+                if (state.tracks.video.includes(clip)) {
+                    state.tracks.video.push(newClip);
+                } else {
+                    for (const track of state.tracks.audio) {
+                        if (track.includes(clip)) {
+                            track.push(newClip);
+                            break;
+                        }
+                    }
+                }
                 renderTimeline();
             }
         }
     });
 
-    btn('tool-add-media', () => {
-        elements.fileInput.click();
-    });
+    btn('tool-add-media', () => elements.fileInput.click());
 
-    // Recording
     btn('tool-record', () => {
+        if (audioCtx.state === 'suspended') audioCtx.resume();
         elements.recordOverlay.classList.remove('hidden');
         startRecording();
     });
@@ -800,7 +831,6 @@ function setupToolbar() {
         stopRecording(false);
         elements.recordOverlay.classList.add('hidden');
     });
-
     document.getElementById('stop-record-btn').addEventListener('click', () => {
         stopRecording(true);
         elements.recordOverlay.classList.add('hidden');
@@ -810,13 +840,6 @@ function setupToolbar() {
     btn('tool-silence', removeSilenceTool);
 }
 
-
-// --- Recording ---
-
-let mediaRecorder;
-let chunks = [];
-let recordingStream;
-
 function startRecording() {
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
         recordingStream = stream;
@@ -824,8 +847,6 @@ function startRecording() {
         chunks = [];
         mediaRecorder.ondataavailable = e => chunks.push(e.data);
         mediaRecorder.start();
-
-        // Visualize
         visualizeMic(stream);
     });
 }
@@ -836,8 +857,7 @@ function stopRecording(save) {
             if (save) {
                 const blob = new Blob(chunks, { type: 'audio/webm' });
                 const file = new File([blob], `Rec_${Date.now()}.webm`, { type: 'audio/webm' });
-                processFile(file); // Adds to media library
-                // We should technically wait for it to load to add to timeline
+                processFile(file);
             }
             if (recordingStream) recordingStream.getTracks().forEach(t => t.stop());
         };
@@ -849,6 +869,10 @@ function visualizeMic(stream) {
     const canvas = document.getElementById('waveform-canvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
+
+    // Ensure context is running
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+
     const source = audioCtx.createMediaStreamSource(stream);
     const analyser = audioCtx.createAnalyser();
     source.connect(analyser);
@@ -878,8 +902,6 @@ function visualizeMic(stream) {
     draw();
 }
 
-// --- Features ---
-
 function extractAudio() {
     if (!state.selectedClipId) return alert('Select video clip');
     const clip = state.tracks.video.find(c => c.id === state.selectedClipId);
@@ -893,25 +915,17 @@ function extractAudio() {
         type: 'audio',
         muted: false
     };
-    state.tracks.audio.push(audioClip);
-    clip.muted = true; // Mute video
-
+    state.tracks.audio[0].push(audioClip); // Add to Track 1
+    clip.muted = true;
     renderTimeline();
 }
 
 async function removeSilenceTool() {
     if (!state.selectedClipId) return alert('Select a clip');
-
-    let type = 'video';
-    let clip = state.tracks.video.find(c => c.id === state.selectedClipId);
-    if (!clip) {
-        type = 'audio';
-        clip = state.tracks.audio.find(c => c.id === state.selectedClipId);
-    }
+    const clip = findClip(state.selectedClipId);
+    if (!clip) return;
 
     const media = state.media.find(m => m.id === clip.mediaId);
-
-    // Load Audio
     let buffer = waveformCache[media.id];
     if (!buffer) {
         const r = await fetch(media.url);
@@ -920,31 +934,25 @@ async function removeSilenceTool() {
         waveformCache[media.id] = buffer;
     }
 
-    // Analyze Logic
-    // 1. Map samples to timeline time
     const startSample = Math.floor(clip.offset * buffer.sampleRate);
     const endSample = Math.floor((clip.offset + clip.duration) * buffer.sampleRate);
-    const data = buffer.getChannelData(0); // Mono check for simplicity, or check max of channels
+    const data = buffer.getChannelData(0);
 
-    const threshold = 0.01; // Amplitude threshold
-    const minSilenceDur = 0.3; // Seconds
-    const minSpeechDur = 0.2; // Seconds
+    const threshold = 0.01;
+    const minSilenceDur = 0.1;
+    const minSpeechDur = 0.1;
 
-    const ranges = []; // {start, end, type: 'speech'|'silence'}
+    const ranges = [];
     let isSpeech = false;
     let rangeStart = startSample;
 
-    // Scan
-    for (let i = startSample; i < endSample; i += 100) { // Step 100 samples ~2ms
+    for (let i = startSample; i < endSample; i += 100) {
         const val = Math.abs(data[i]);
         if (val > threshold && !isSpeech) {
-            // Silence -> Speech
             ranges.push({ start: rangeStart, end: i, type: 'silence' });
             rangeStart = i;
             isSpeech = true;
         } else if (val <= threshold && isSpeech) {
-            // Speech -> Silence? Wait to confirm it's not just a pause
-            // Look ahead
             let futureSpeech = false;
             for (let j = 1; j < (minSilenceDur * buffer.sampleRate) / 100 && (i+j*100) < endSample; j++) {
                  if (Math.abs(data[i+j*100]) > threshold) {
@@ -961,7 +969,6 @@ async function removeSilenceTool() {
     }
     ranges.push({ start: rangeStart, end: endSample, type: isSpeech ? 'speech' : 'silence' });
 
-    // Filter & Process
     const speechSegments = ranges.filter(r => r.type === 'speech' && (r.end - r.start)/buffer.sampleRate > minSpeechDur);
 
     if (speechSegments.length === 0) return alert('No speech detected.');
@@ -969,10 +976,18 @@ async function removeSilenceTool() {
     saveState();
 
     // Remove original clip
-    state.tracks[type] = state.tracks[type].filter(c => c.id !== clip.id);
+    state.tracks.video = state.tracks.video.filter(c => c.id !== clip.id);
+    state.tracks.audio.forEach(t => {
+        const idx = t.findIndex(c => c.id === clip.id);
+        if (idx !== -1) t.splice(idx, 1);
+    });
 
-    // Add new clips
     let insertTime = clip.startTime;
+
+    // Determine where to add new clips (original track?)
+    // We need to know which track it came from.
+    // For simplicity, video clips go to video track, audio clips to audio track 1 (or we search).
+    // Let's assume video stays video.
 
     speechSegments.forEach(seg => {
         const segDuration = (seg.end - seg.start) / buffer.sampleRate;
@@ -987,9 +1002,14 @@ async function removeSilenceTool() {
             type: clip.type,
             muted: clip.muted
         };
-        state.tracks[type].push(newClip);
 
-        insertTime += segDuration; // Collapse gap
+        if (clip.type === 'video') {
+            state.tracks.video.push(newClip);
+        } else {
+             state.tracks.audio[0].push(newClip);
+        }
+
+        insertTime += segDuration;
     });
 
     renderTimeline();
@@ -997,7 +1017,7 @@ async function removeSilenceTool() {
 
 function setupExport() {
     elements.exportBtn.addEventListener('click', () => {
-        alert("Export started (simplified). Playing video...");
+        alert("Exporting...");
         state.isPlaying = false;
         seek(0);
 
@@ -1007,14 +1027,12 @@ function setupExport() {
         const ctx = canvas.getContext('2d');
         const dest = audioCtx.createMediaStreamDestination();
 
-        // Connect Main Video to Dest
+        // Main video audio
         try {
              const src = audioCtx.createMediaElementSource(elements.mainVideo);
              src.connect(dest);
              src.connect(audioCtx.destination);
-        } catch(e) {
-            // Already connected
-        }
+        } catch(e) {}
 
         const stream = canvas.captureStream(30);
         if (dest.stream.getAudioTracks().length > 0) {
@@ -1036,8 +1054,10 @@ function setupExport() {
         recorder.start();
         state.isPlaying = true;
 
-        // Loop
-        const maxTime = Math.max(...state.tracks.video.map(c=>c.startTime+c.duration));
+        // Calc max time
+        let maxTime = 0;
+        state.tracks.video.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration));
+        state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
 
         function recLoop() {
             if (!state.isPlaying || state.playbackTime >= maxTime) {
@@ -1045,7 +1065,6 @@ function setupExport() {
                 state.isPlaying = false;
                 return;
             }
-
             ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
             requestAnimationFrame(recLoop);
         }

@@ -42,6 +42,7 @@ function init() {
     setupDragAndDrop();
     setupTimelineInteraction();
     setupToolbar();
+    setupKeyboardShortcuts();
     setupExport();
     setupMobileUI();
 
@@ -100,6 +101,33 @@ function redo() {
 }
 
 // --- UI & Interaction ---
+
+function setupKeyboardShortcuts() {
+    window.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+        if (e.code === 'Space') {
+            e.preventDefault();
+            document.getElementById('play-pause-btn').click();
+        }
+
+        if (e.code === 'Delete') {
+            document.getElementById('tool-delete').click();
+        }
+
+        if (e.ctrlKey || e.metaKey) {
+            if (e.code === 'KeyZ') {
+                if (e.shiftKey) redo();
+                else undo();
+                e.preventDefault();
+            }
+            if (e.code === 'KeyY') {
+                redo();
+                e.preventDefault();
+            }
+        }
+    });
+}
 
 function setupMobileUI() {
     const toggle = document.createElement('button');
@@ -938,9 +966,17 @@ async function removeSilenceTool() {
     const endSample = Math.floor((clip.offset + clip.duration) * buffer.sampleRate);
     const data = buffer.getChannelData(0);
 
-    const threshold = 0.01;
-    const minSilenceDur = 0.1;
-    const minSpeechDur = 0.1;
+    // Dynamic Threshold
+    let maxVal = 0;
+    // Scan segment to find max amplitude (step 100 for speed)
+    for (let i = startSample; i < endSample; i += 100) {
+        const v = Math.abs(data[i]);
+        if (v > maxVal) maxVal = v;
+    }
+
+    const threshold = Math.max(0.01, maxVal * 0.15); // 15% of peak
+    const minSilenceDur = 0.15;
+    const minSpeechDur = 0.15; // Kept consistent or should be 0.15? User said "minSilenceDur to 0.15" but didn't specify speech. I'll stick to 0.15 for robustness.
 
     const ranges = [];
     let isSpeech = false;
@@ -971,7 +1007,7 @@ async function removeSilenceTool() {
 
     const speechSegments = ranges.filter(r => r.type === 'speech' && (r.end - r.start)/buffer.sampleRate > minSpeechDur);
 
-    if (speechSegments.length === 0) return alert('No speech detected.');
+    if (speechSegments.length === 0) return alert('No speech detected (threshold: ' + threshold.toFixed(4) + ')');
 
     saveState();
 

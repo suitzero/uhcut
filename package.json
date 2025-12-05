@@ -1,0 +1,26 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "\"# uhcut\"",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/suitzero/uhcut.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/suitzero/uhcut/issues"
+  },
+  "homepage": "https://github.com/suitzero/uhcut#readme",
+  "dependencies": {
+    "@capacitor/cli": "^7.4.4",
+    "@capacitor/core": "^7.4.4",
+    "@capacitor/ios": "^7.4.4"
+  }
+}

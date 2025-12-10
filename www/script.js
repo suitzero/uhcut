@@ -17,9 +17,7 @@ const redoStack = [];
 
 // DOM Elements
 const elements = {
-    dropZone: document.getElementById('drop-zone'),
     fileInput: document.getElementById('file-upload'),
-    mediaList: document.getElementById('media-list'),
     timelineTracks: document.getElementById('timeline-tracks'),
     timelineRuler: document.getElementById('time-ruler'),
     playhead: document.getElementById('playhead'),
@@ -39,12 +37,11 @@ const TRACK_HEIGHT = 50;
 
 // Initialization
 function init() {
-    setupDragAndDrop();
+    setupFileInput();
     setupTimelineInteraction();
     setupToolbar();
     setupKeyboardShortcuts();
     setupExport();
-    setupMobileUI();
 
     requestAnimationFrame(renderLoop);
     renderTimeline();
@@ -129,64 +126,16 @@ function setupKeyboardShortcuts() {
     });
 }
 
-function setupMobileUI() {
-    const toggle = document.createElement('button');
-    toggle.textContent = '📁';
-    toggle.className = 'mobile-media-toggle';
-    toggle.style.cssText = 'position: absolute; top: 50px; left: 10px; z-index: 100; display: none; padding: 8px; border-radius: 50%; background: #333; color: white; border: 1px solid #555;';
-
-    document.body.appendChild(toggle);
-
-    const checkMobile = () => {
-        const isMobile = window.innerWidth <= 768;
-        toggle.style.display = isMobile ? 'block' : 'none';
-        if (!isMobile) {
-            document.getElementById('media-library').style.display = 'flex';
-        } else {
-             document.getElementById('media-library').style.display = 'none';
-        }
-    };
-
-    toggle.addEventListener('click', () => {
-        const lib = document.getElementById('media-library');
-        lib.style.display = lib.style.display === 'flex' ? 'none' : 'flex';
-        if (lib.style.display === 'flex') {
-            lib.style.cssText = 'display: flex; position: absolute; top: 90px; left: 0; width: 200px; bottom: 250px; z-index: 90; background: #1e1e2f; border-right: 1px solid #333;';
-        }
-    });
-
-    window.addEventListener('resize', checkMobile);
-    checkMobile();
-}
-
-function setupDragAndDrop() {
-    const { dropZone, fileInput } = elements;
-
-    dropZone.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', handleFiles);
-
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#00d2ff';
-    });
-
-    dropZone.addEventListener('dragleave', () => {
-        dropZone.style.borderColor = '#333';
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#333';
-        handleFiles({ target: { files: e.dataTransfer.files } });
-    });
+function setupFileInput() {
+    elements.fileInput.addEventListener('change', handleFiles);
 }
 
 function handleFiles(e) {
     const files = Array.from(e.target.files);
-    files.forEach(processFile);
+    files.forEach(f => processFile(f));
 }
 
-function processFile(file) {
+function processFile(file, startTime = null) {
     const url = URL.createObjectURL(file);
     const type = file.type.startsWith('video') ? 'video' : 'audio';
     const id = Date.now() + Math.random().toString(36).substr(2, 9);
@@ -203,30 +152,14 @@ function processFile(file) {
             duration: element.duration || 0
         };
         state.media.push(item);
-        addToMediaLibrary(item);
 
-        // Direct Add to Timeline Logic
-        addToTimelineSmart(item);
+        if (startTime !== null) {
+             addClipToTimeline(item, startTime);
+        } else {
+             addToTimelineSmart(item);
+        }
     };
     element.src = url;
-}
-
-function addToMediaLibrary(item) {
-    const div = document.createElement('div');
-    div.className = 'media-item';
-    div.textContent = item.name;
-    div.draggable = true;
-    div.dataset.mediaId = item.id;
-
-    div.addEventListener('dragstart', (e) => {
-        e.dataTransfer.setData('application/json', JSON.stringify(item));
-    });
-
-    div.addEventListener('click', () => {
-        addToTimelineSmart(item);
-    });
-
-    elements.mediaList.appendChild(div);
 }
 
 function addToTimelineSmart(item) {
@@ -243,14 +176,12 @@ function addToTimelineSmart(item) {
     };
 
     if (item.type === 'video') {
-        // Append to end of video track
         const lastClip = state.tracks.video.length > 0
             ? state.tracks.video.reduce((a, b) => (a.startTime + a.duration > b.startTime + b.duration ? a : b))
             : null;
         clip.startTime = lastClip ? (lastClip.startTime + lastClip.duration) : 0;
         state.tracks.video.push(clip);
     } else {
-        // Audio Collision Logic: Find first available track
         let added = false;
         for (let i = 0; i < state.tracks.audio.length; i++) {
             const trackClips = state.tracks.audio[i];
@@ -259,34 +190,15 @@ function addToTimelineSmart(item) {
                  : null;
             const potentialStart = lastClip ? (lastClip.startTime + lastClip.duration) : 0;
 
-            // Check global playback time? Or just append?
-            // User said: "attach at the timeline where the fore stationed clip is being ended"
-            // So we act like a magnetic timeline per track.
-
             clip.startTime = potentialStart;
             trackClips.push(clip);
             added = true;
             break;
         }
-        // If all full (logic above blindly adds to first track actually, let's refine)
-        // Wait, the logic above always adds to track 0.
-        // We want to fill gaps or parallel?
-        // "go to next channel if it is audio" implies if Track 1 has stuff, put on Track 2?
-        // Let's assume we want to place it at the *playhead* or at 0, and bump if needed.
-        // If we append to end, we just fill Track 1.
-
-        // Let's implement: Try to fit in Track 1 at Playhead. If overlap, Try Track 2.
-        // But `processFile` usually means "Append".
-        // Let's stick to "Append to Track 1". If Track 1 is huge, maybe Track 2?
-        // Simpler: Just cycle tracks? No.
-        // Let's stick to: Always append to Track 1 for now, user can move it.
-        // BUT user asked "clips on timeline shouldn't be duplicated at the same timeline. it's either go to next channel..."
-        // This implies drag-drop logic mostly.
-
-        // Re-reading: "it's either go to next channel if it is audio or attach at the timeline where the fore stationed clip is being ended."
-        // This means: If I drop it on top of another, it should move to next channel OR snap to end.
-        // Since this is `processFile` (auto-add), let's just append to the end of Track 1.
-        // Drag and drop logic needs to handle the "next channel" bit.
+        if (!added) {
+             // Fallback to Track 0 if logic somehow fails (e.g. infinite tracks not implemented)
+             state.tracks.audio[0].push(clip);
+        }
     }
 
     renderTimeline();
@@ -295,7 +207,6 @@ function addToTimelineSmart(item) {
 // --- Timeline Logic ---
 
 function addClipToTimeline(mediaItem, startTime) {
-    // This is called by Drag & Drop
     saveState();
     const clip = {
         id: 'clip_' + Date.now() + Math.random().toString(36).substr(2, 5),
@@ -310,23 +221,15 @@ function addClipToTimeline(mediaItem, startTime) {
     if (mediaItem.type === 'video') {
         state.tracks.video.push(clip);
     } else {
-        // Find which audio track to drop onto based on Y position?
-        // Current drag logic only gives us X (time).
-        // Let's auto-assign track based on collision.
-
         let targetTrackIndex = 0;
         let hasCollision = checkCollision(state.tracks.audio[0], clip);
 
         if (hasCollision && state.tracks.audio[1]) {
             targetTrackIndex = 1;
-            // Check collision there too?
             if (checkCollision(state.tracks.audio[1], clip)) {
-                // If both full, stick to track 0? Or overlap allowed?
-                // User said "go to next channel".
-                // If both full, maybe just let it overlap on Track 2.
+                // Collision on both tracks
             }
         }
-
         state.tracks.audio[targetTrackIndex].push(clip);
     }
 
@@ -351,15 +254,15 @@ function setupTimelineInteraction() {
     timelineTracks.addEventListener('dragover', (e) => e.preventDefault());
     timelineTracks.addEventListener('drop', (e) => {
         e.preventDefault();
-        const data = e.dataTransfer.getData('application/json');
-        if (!data) return;
-        try {
-            const item = JSON.parse(data);
-            const rect = timelineTracks.getBoundingClientRect();
-            const x = e.clientX - rect.left + timelineTracks.scrollLeft;
-            const startTime = x / state.zoom;
-            addClipToTimeline(item, startTime);
-        } catch (err) {}
+
+        const rect = timelineTracks.getBoundingClientRect();
+        const x = e.clientX - rect.left + timelineTracks.scrollLeft;
+        const startTime = x / state.zoom;
+
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            const files = Array.from(e.dataTransfer.files);
+            files.forEach(f => processFile(f, startTime));
+        }
     });
 
     timelineTracks.addEventListener('mousedown', handleMouseDown);
@@ -425,8 +328,6 @@ function handleMouseMove(e) {
 
 function handleMouseUp() {
     if (isDragging) {
-        // Resolve overlaps on drop?
-        // For now, we trust user placement, but we could enforce "next channel" logic here too.
         isDragging = false;
         dragClipId = null;
         renderTimeline();
@@ -492,11 +393,6 @@ function renderTrack(clips, type, index) {
         trackEl.dataset.type = type;
         trackEl.dataset.trackId = trackId;
         timelineTracks.appendChild(trackEl);
-
-        // Label for track?
-        // if (type === 'audio') {
-        //     trackEl.style.borderTop = '1px solid #444';
-        // }
     }
 
     Array.from(trackEl.children).forEach(el => el.dataset.stale = 'true');

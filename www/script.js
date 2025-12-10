@@ -142,6 +142,11 @@ function processFile(file, startTime = null) {
 
     const element = document.createElement(type === 'video' ? 'video' : 'audio');
     element.preload = 'metadata';
+
+    element.onerror = (e) => {
+        alert("Failed to load media: " + file.name + ". Ensure format is supported.");
+    };
+
     element.onloadedmetadata = () => {
         const item = {
             id,
@@ -577,10 +582,18 @@ function renderRuler(duration) {
     timelineRuler.innerHTML = '';
     timelineRuler.style.width = elements.timelineTracks.style.width;
 
+    // Dynamic interval based on zoom to prevent overlap
+    const minPx = 60;
     let interval = 1;
-    if (state.zoom < 20) interval = 5;
-    if (state.zoom < 5) interval = 10;
-    if (state.zoom < 1) interval = 30;
+    while (interval * state.zoom < minPx) {
+        if (interval < 1) interval = 1;
+        else if (interval < 2) interval = 2;
+        else if (interval < 5) interval = 5;
+        else if (interval < 10) interval = 10;
+        else if (interval < 30) interval = 30;
+        else if (interval < 60) interval = 60;
+        else interval += 60;
+    }
 
     for (let t = 0; t <= duration; t += interval) {
         const tick = document.createElement('div');
@@ -691,6 +704,11 @@ function setupToolbar() {
 
     btn('play-pause-btn', () => {
         state.isPlaying = !state.isPlaying;
+
+        const playIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        const pauseIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+        elements.playPauseBtn.innerHTML = state.isPlaying ? pauseIcon : playIcon;
+
         if (!state.isPlaying) {
              elements.mainVideo.pause();
              Object.values(audioPool).forEach(a => a.pause());

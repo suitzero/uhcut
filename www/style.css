@@ -33,12 +33,14 @@ body {
 }
 
 .top-bar {
-    height: 40px;
+    height: calc(40px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
     background: var(--panel-bg);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 16px;
+    padding-left: 16px;
+    padding-right: 16px;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -131,6 +133,8 @@ button:hover {
     overflow-y: hidden;
     display: flex;
     flex-direction: column;
+    padding-left: 20px; /* Safe start padding */
+    padding-right: 20px;
 }
 
 .timeline-header {

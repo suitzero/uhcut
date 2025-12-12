@@ -25,7 +25,10 @@ const elements = {
     playPauseBtn: document.getElementById('play-pause-btn'),
     timeDisplay: document.getElementById('time-display'),
     exportBtn: document.getElementById('export-btn'),
-    recordOverlay: document.getElementById('record-overlay')
+    recordOverlay: document.getElementById('record-overlay'),
+    exportOverlay: document.getElementById('export-overlay'),
+    exportProgress: document.getElementById('export-progress-text'),
+    cancelExportBtn: document.getElementById('cancel-export-btn')
 };
 
 // Global Audio Context (Singleton)
@@ -144,7 +147,8 @@ function processFile(file, startTime = null) {
     element.preload = 'metadata';
 
     element.onerror = (e) => {
-        alert("Failed to load media: " + file.name + ". Ensure format is supported.");
+        console.error(e);
+        alert("Failed to load media: " + file.name + ". Format may not be supported.");
     };
 
     element.onloadedmetadata = () => {
@@ -201,7 +205,6 @@ function addToTimelineSmart(item) {
             break;
         }
         if (!added) {
-             // Fallback to Track 0 if logic somehow fails (e.g. infinite tracks not implemented)
              state.tracks.audio[0].push(clip);
         }
     }
@@ -582,7 +585,7 @@ function renderRuler(duration) {
     timelineRuler.innerHTML = '';
     timelineRuler.style.width = elements.timelineTracks.style.width;
 
-    // Dynamic interval based on zoom to prevent overlap
+    // Min pixels between ticks
     const minPx = 60;
     let interval = 1;
     while (interval * state.zoom < minPx) {
@@ -785,7 +788,18 @@ function setupToolbar() {
 function startRecording() {
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
         recordingStream = stream;
-        mediaRecorder = new MediaRecorder(stream);
+
+        // iOS Mime Check
+        const types = ['audio/mp4', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm'];
+        let options = undefined;
+        for (const t of types) {
+            if (MediaRecorder.isTypeSupported(t)) {
+                options = { mimeType: t };
+                break;
+            }
+        }
+
+        mediaRecorder = new MediaRecorder(stream, options);
         chunks = [];
         mediaRecorder.ondataavailable = e => chunks.push(e.data);
         mediaRecorder.start();
@@ -797,8 +811,10 @@ function stopRecording(save) {
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
         mediaRecorder.onstop = () => {
             if (save) {
-                const blob = new Blob(chunks, { type: 'audio/webm' });
-                const file = new File([blob], `Rec_${Date.now()}.webm`, { type: 'audio/webm' });
+                const mime = mediaRecorder.mimeType;
+                const ext = mime.includes('mp4') ? 'mp4' : (mime.includes('aac') ? 'aac' : 'webm');
+                const blob = new Blob(chunks, { type: mime });
+                const file = new File([blob], `Rec_${Date.now()}.${ext}`, { type: mime });
                 processFile(file);
             }
             if (recordingStream) recordingStream.getTracks().forEach(t => t.stop());
@@ -966,8 +982,10 @@ async function removeSilenceTool() {
 }
 
 function setupExport() {
-    elements.exportBtn.addEventListener('click', () => {
-        alert("Exporting...");
+    elements.exportBtn.addEventListener('click', async () => {
+        elements.exportOverlay.classList.remove('hidden');
+        elements.exportProgress.textContent = 'Preparing...';
+
         state.isPlaying = false;
         seek(0);
 
@@ -989,25 +1007,61 @@ function setupExport() {
             stream.addTrack(dest.stream.getAudioTracks()[0]);
         }
 
-        const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        // Supported export types
+        const exportTypes = [
+            'video/mp4;codecs=avc1',
+            'video/mp4',
+            'video/webm;codecs=vp9',
+            'video/webm'
+        ];
+        let selectedType = '';
+        for (const t of exportTypes) {
+            if (MediaRecorder.isTypeSupported(t)) { selectedType = t; break; }
+        }
+
+        const recorder = new MediaRecorder(stream, selectedType ? { mimeType: selectedType } : undefined);
         const chunks = [];
         recorder.ondataavailable = e => chunks.push(e.data);
+
+        // Max time
+        let maxTime = 0;
+        state.tracks.video.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration));
+        state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
+        if (maxTime === 0) maxTime = 1;
+
         recorder.onstop = () => {
-            const blob = new Blob(chunks, {type: 'video/webm'});
+            elements.exportProgress.textContent = 'Finalizing...';
+            const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
+            const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
+            const filename = `uhcut-export.${ext}`;
+
+            // Try Share API (Mobile Friendly)
+            if (navigator.share && navigator.canShare) {
+                const file = new File([blob], filename, { type: selectedType || 'video/webm' });
+                if (navigator.canShare({ files: [file] })) {
+                    navigator.share({
+                        files: [file],
+                        title: 'UhCut Export',
+                        text: 'Here is my video!'
+                    }).then(() => {
+                        elements.exportOverlay.classList.add('hidden');
+                    }).catch(console.error);
+                    return; // Done
+                }
+            }
+
+            // Fallback Download
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'export.webm';
+            a.download = filename;
             a.click();
+
+            setTimeout(() => elements.exportOverlay.classList.add('hidden'), 1000);
         };
 
         recorder.start();
         state.isPlaying = true;
-
-        // Calc max time
-        let maxTime = 0;
-        state.tracks.video.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration));
-        state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
 
         function recLoop() {
             if (!state.isPlaying || state.playbackTime >= maxTime) {
@@ -1015,10 +1069,21 @@ function setupExport() {
                 state.isPlaying = false;
                 return;
             }
+
+            // Progress
+            const pct = Math.floor((state.playbackTime / maxTime) * 100);
+            elements.exportProgress.textContent = `${pct}%`;
+
             ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
             requestAnimationFrame(recLoop);
         }
         recLoop();
+
+        elements.cancelExportBtn.onclick = () => {
+            recorder.stop();
+            state.isPlaying = false;
+            elements.exportOverlay.classList.add('hidden');
+        };
     });
 }
 

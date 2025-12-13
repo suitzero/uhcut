@@ -18,6 +18,7 @@ const redoStack = [];
 // DOM Elements
 const elements = {
     fileInput: document.getElementById('file-upload'),
+    timelineContainer: document.querySelector('.timeline-container'),
     timelineTracks: document.getElementById('timeline-tracks'),
     timelineRuler: document.getElementById('time-ruler'),
     playhead: document.getElementById('playhead'),
@@ -257,14 +258,18 @@ let dragStartX = 0;
 let dragOriginalStart = 0;
 
 function setupTimelineInteraction() {
-    const { timelineTracks } = elements;
+    const { timelineTracks, timelineContainer } = elements;
 
+    // Drop listener needs to account for container scroll
     timelineTracks.addEventListener('dragover', (e) => e.preventDefault());
     timelineTracks.addEventListener('drop', (e) => {
         e.preventDefault();
 
+        // Calculate X relative to the tracks container (absolute timeline px)
         const rect = timelineTracks.getBoundingClientRect();
-        const x = e.clientX - rect.left + timelineTracks.scrollLeft;
+        // Since timelineTracks is inside the scrollable area, rect.left moves.
+        // e.clientX - rect.left gives the pixel offset inside the track.
+        const x = e.clientX - rect.left;
         const startTime = x / state.zoom;
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -295,8 +300,9 @@ function setupTimelineInteraction() {
             state.selectedClipId = clipEl.dataset.clipId;
         } else {
             state.selectedClipId = null;
+            // Seek
             const rect = timelineTracks.getBoundingClientRect();
-            const x = e.clientX - rect.left + timelineTracks.scrollLeft;
+            const x = e.clientX - rect.left;
             seek(x / state.zoom);
         }
         renderTimeline();
@@ -356,12 +362,32 @@ function findClip(id) {
 function setZoom(newZoom, mouseX) {
     const oldZoom = state.zoom;
     state.zoom = Math.max(1, Math.min(200, newZoom));
+
+    // Zoom around mouse
     const rect = elements.timelineTracks.getBoundingClientRect();
     const trackX = (mouseX || (rect.left + rect.width/2)) - rect.left;
-    const timeAtMouse = (trackX + elements.timelineTracks.scrollLeft) / oldZoom;
+    const timeAtMouse = trackX / oldZoom;
+
+    // Viewport-relative mouse X (for restoring scroll position)
+    const containerRect = elements.timelineContainer.getBoundingClientRect();
+    const mouseXInContainer = (mouseX || (containerRect.left + containerRect.width/2)) - containerRect.left;
+
     renderTimeline();
-    const newScroll = (timeAtMouse * state.zoom) - trackX;
-    elements.timelineTracks.scrollLeft = Math.max(0, newScroll);
+
+    // New Scroll: The point 'timeAtMouse' should be at 'mouseXInContainer' relative to container
+    // timeAtMouse * newZoom is the new pixel pos on track.
+    // We want: NewPixelPos - NewScroll = mouseXInContainer (minus padding offset if relevant, but scrollLeft includes padding area usually? no).
+    // Let's assume container scrollLeft=0 means track Left is at 20px (due to padding).
+    // So visual pos = trackPixel + 20 - scrollLeft.
+    // We want: trackPixel + 20 - scrollLeft = mouseXInContainer.
+    // => scrollLeft = trackPixel + 20 - mouseXInContainer.
+
+    const newPixelPos = timeAtMouse * state.zoom;
+    // 20 is padding-left. We can read it dynamically or hardcode since we set it.
+    const padding = 20;
+    const newScroll = newPixelPos + padding - mouseXInContainer;
+
+    elements.timelineContainer.scrollLeft = Math.max(0, newScroll);
 }
 
 // --- Rendering ---
@@ -691,9 +717,9 @@ function renderLoop(timestamp) {
         syncMedia();
 
         const playheadPx = state.playbackTime * state.zoom;
-        const scrollLeft = elements.timelineTracks.scrollLeft;
-        const width = elements.timelineTracks.clientWidth;
-        if (playheadPx > scrollLeft + width - 100) elements.timelineTracks.scrollLeft = playheadPx - 100;
+        const scrollLeft = elements.timelineContainer.scrollLeft;
+        const width = elements.timelineContainer.clientWidth;
+        if (playheadPx > scrollLeft + width - 100) elements.timelineContainer.scrollLeft = playheadPx - 100;
     } else {
         state.lastFrameTime = 0;
     }
@@ -1029,7 +1055,7 @@ function setupExport() {
         state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
         if (maxTime === 0) maxTime = 1;
 
-        recorder.onstop = () => {
+        recorder.onstop = async () => {
             elements.exportProgress.textContent = 'Finalizing...';
             const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
             const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
@@ -1037,16 +1063,19 @@ function setupExport() {
 
             // Try Share API (Mobile Friendly)
             if (navigator.share && navigator.canShare) {
-                const file = new File([blob], filename, { type: selectedType || 'video/webm' });
-                if (navigator.canShare({ files: [file] })) {
-                    navigator.share({
-                        files: [file],
-                        title: 'UhCut Export',
-                        text: 'Here is my video!'
-                    }).then(() => {
+                try {
+                    const file = new File([blob], filename, { type: selectedType || 'video/webm' });
+                    if (navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                            files: [file],
+                            title: 'UhCut Export',
+                            text: 'Here is my video!'
+                        });
                         elements.exportOverlay.classList.add('hidden');
-                    }).catch(console.error);
-                    return; // Done
+                        return; // Done
+                    }
+                } catch (e) {
+                    console.warn("Share failed/cancelled, falling back to download", e);
                 }
             }
 

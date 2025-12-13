@@ -194,7 +194,8 @@ button:hover {
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 20px; /* Initial position */
+    left: 0;
+    margin-left: 20px; /* Match container padding */
     width: 2px;
     background: white;
     z-index: 20;

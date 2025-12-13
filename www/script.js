@@ -29,7 +29,8 @@ const elements = {
     recordOverlay: document.getElementById('record-overlay'),
     exportOverlay: document.getElementById('export-overlay'),
     exportProgress: document.getElementById('export-progress-text'),
-    cancelExportBtn: document.getElementById('cancel-export-btn')
+    cancelExportBtn: document.getElementById('cancel-export-btn'),
+    saveExportBtn: document.getElementById('save-export-btn')
 };
 
 // Global Audio Context (Singleton)
@@ -265,9 +266,7 @@ function setupTimelineInteraction() {
     timelineTracks.addEventListener('drop', (e) => {
         e.preventDefault();
 
-        // Calculate X relative to the tracks container (absolute timeline px)
         const rect = timelineTracks.getBoundingClientRect();
-        // Since timelineTracks is inside the scrollable area, rect.left moves.
         // e.clientX - rect.left gives the pixel offset inside the track.
         const x = e.clientX - rect.left;
         const startTime = x / state.zoom;
@@ -374,16 +373,8 @@ function setZoom(newZoom, mouseX) {
 
     renderTimeline();
 
-    // New Scroll: The point 'timeAtMouse' should be at 'mouseXInContainer' relative to container
-    // timeAtMouse * newZoom is the new pixel pos on track.
-    // We want: NewPixelPos - NewScroll = mouseXInContainer (minus padding offset if relevant, but scrollLeft includes padding area usually? no).
-    // Let's assume container scrollLeft=0 means track Left is at 20px (due to padding).
-    // So visual pos = trackPixel + 20 - scrollLeft.
-    // We want: trackPixel + 20 - scrollLeft = mouseXInContainer.
-    // => scrollLeft = trackPixel + 20 - mouseXInContainer.
-
     const newPixelPos = timeAtMouse * state.zoom;
-    // 20 is padding-left. We can read it dynamically or hardcode since we set it.
+    // 20 is padding-left.
     const padding = 20;
     const newScroll = newPixelPos + padding - mouseXInContainer;
 
@@ -1011,6 +1002,8 @@ function setupExport() {
     elements.exportBtn.addEventListener('click', async () => {
         elements.exportOverlay.classList.remove('hidden');
         elements.exportProgress.textContent = 'Preparing...';
+        elements.saveExportBtn.style.display = 'none';
+        elements.cancelExportBtn.style.display = 'inline-block';
 
         state.isPlaying = false;
         seek(0);
@@ -1056,37 +1049,52 @@ function setupExport() {
         if (maxTime === 0) maxTime = 1;
 
         recorder.onstop = async () => {
-            elements.exportProgress.textContent = 'Finalizing...';
-            const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
-            const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
-            const filename = `uhcut-export.${ext}`;
+            elements.exportProgress.textContent = 'Ready!';
 
-            // Try Share API (Mobile Friendly)
-            if (navigator.share && navigator.canShare) {
-                try {
-                    const file = new File([blob], filename, { type: selectedType || 'video/webm' });
-                    if (navigator.canShare({ files: [file] })) {
+            const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
+            if (blob.size === 0) {
+                elements.exportProgress.textContent = 'Error: Recording Failed (Empty)';
+                return;
+            }
+
+            elements.cancelExportBtn.style.display = 'none';
+            elements.saveExportBtn.style.display = 'inline-block';
+
+            elements.saveExportBtn.onclick = async () => {
+                const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
+                const filename = `uhcut-export.${ext}`;
+                const file = new File([blob], filename, { type: selectedType || 'video/webm' });
+
+                // Try Share API
+                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                    try {
                         await navigator.share({
                             files: [file],
                             title: 'UhCut Export',
-                            text: 'Here is my video!'
+                            text: 'Created with UhCut'
                         });
                         elements.exportOverlay.classList.add('hidden');
-                        return; // Done
+                        return;
+                    } catch (e) {
+                        console.warn("Share failed/cancelled", e);
                     }
-                } catch (e) {
-                    console.warn("Share failed/cancelled, falling back to download", e);
                 }
-            }
 
-            // Fallback Download
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            a.click();
+                // Fallback
+                const url = URL.createObjectURL(blob);
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-            setTimeout(() => elements.exportOverlay.classList.add('hidden'), 1000);
+                if (isIOS) {
+                    window.open(url, '_blank');
+                } else {
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                }
+
+                setTimeout(() => elements.exportOverlay.classList.add('hidden'), 2000);
+            };
         };
 
         recorder.start();

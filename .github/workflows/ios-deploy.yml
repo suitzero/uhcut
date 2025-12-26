@@ -39,8 +39,13 @@ jobs:
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
           # 2. Import certificate and provisioning profile from secrets
-          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          echo -n "$BUILD_CERTIFICATE_BASE64" | openssl base64 -d -A -out $CERTIFICATE_PATH
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | openssl base64 -d -A -out $PP_PATH
+
+          # Debug: Check if files were created and have content
+          echo "Checking certificate file size and type:"
+          ls -lh $CERTIFICATE_PATH
+          file $CERTIFICATE_PATH
 
           # 3. Create temporary keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH

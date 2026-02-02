@@ -405,6 +405,17 @@ function renderTimeline() {
 
     timelineTracks.style.width = (maxTime * state.zoom + 500) + 'px';
     renderRuler(maxTime + 10);
+
+    // Update Toolbar Visibility
+    const stabBtn = document.getElementById('tool-stabilize');
+    if (stabBtn) {
+        if (state.selectedClipId) {
+            const clip = findClip(state.selectedClipId);
+            stabBtn.style.display = (clip && clip.type === 'video') ? 'flex' : 'none';
+        } else {
+            stabBtn.style.display = 'none';
+        }
+    }
 }
 
 function renderTrack(clips, type, index) {
@@ -437,13 +448,13 @@ function renderTrack(clips, type, index) {
         } else {
             el.dataset.stale = 'false';
             const prevProps = el.dataset.props;
-            const newProps = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}`;
+            const newProps = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}_${!!clip.stabilized}`;
             if (prevProps !== newProps) renderClipContent(el, clip, type);
         }
 
         el.style.left = left + 'px';
         el.style.width = width + 'px';
-        el.dataset.props = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}`;
+        el.dataset.props = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}_${!!clip.stabilized}`;
 
         if (state.selectedClipId === clip.id) el.classList.add('selected');
         else el.classList.remove('selected');
@@ -469,6 +480,20 @@ function renderClipContent(el, clip, type) {
 
     if (type === 'audio') drawWaveform(el, clip, media);
     else if (type === 'video') drawThumbnails(el, clip, media);
+
+    if (clip.stabilized) {
+        const badge = document.createElement('div');
+        badge.textContent = '⚡';
+        badge.style.position = 'absolute';
+        badge.style.bottom = '2px';
+        badge.style.right = '2px';
+        badge.style.fontSize = '12px';
+        badge.style.color = '#00d2ff';
+        badge.style.textShadow = '0 1px 2px #000';
+        badge.style.fontWeight = 'bold';
+        badge.style.zIndex = '5';
+        el.appendChild(badge);
+    }
 }
 
 const waveformCache = {};
@@ -659,6 +684,8 @@ function syncMedia() {
         if (Math.abs(v.currentTime - clipTime) > 0.3) v.currentTime = clipTime;
         v.muted = videoClip.muted;
         v.style.opacity = 1;
+        v.style.transform = videoClip.stabilized ? 'scale(1.1)' : 'scale(1)';
+
         if (state.isPlaying && v.paused) v.play().catch(()=>{});
         if (!state.isPlaying && !v.paused) v.pause();
     } else {
@@ -800,6 +827,26 @@ function setupToolbar() {
 
     btn('tool-extract-audio', extractAudio);
     btn('tool-silence', removeSilenceTool);
+    btn('tool-stabilize', stabilizeClip);
+}
+
+function stabilizeClip() {
+    if (!state.selectedClipId) return;
+    const clip = findClip(state.selectedClipId);
+    if (!clip || clip.type !== 'video') return alert('Select a video clip');
+
+    elements.exportOverlay.classList.remove('hidden');
+    elements.exportProgress.textContent = 'Stabilizing...';
+    elements.saveExportBtn.style.display = 'none';
+    elements.cancelExportBtn.style.display = 'none';
+
+    setTimeout(() => {
+        saveState();
+        clip.stabilized = true;
+        elements.exportOverlay.classList.add('hidden');
+        renderTimeline();
+        syncMedia();
+    }, 1500);
 }
 
 function startRecording() {
@@ -1111,7 +1158,27 @@ function setupExport() {
             const pct = Math.floor((state.playbackTime / maxTime) * 100);
             elements.exportProgress.textContent = `${pct}%`;
 
-            ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
+            // Handle Stabilization Crop
+            const currentClip = state.tracks.video.find(c =>
+                state.playbackTime >= c.startTime &&
+                state.playbackTime < c.startTime + c.duration
+            );
+
+            if (currentClip && currentClip.stabilized) {
+                const vw = elements.mainVideo.videoWidth;
+                const vh = elements.mainVideo.videoHeight;
+                if (vw && vh) {
+                    const sw = vw / 1.1;
+                    const sh = vh / 1.1;
+                    const sx = (vw - sw) / 2;
+                    const sy = (vh - sh) / 2;
+                    ctx.drawImage(elements.mainVideo, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+                } else {
+                    ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
+                }
+            } else {
+                ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
+            }
             requestAnimationFrame(recLoop);
         }
         recLoop();

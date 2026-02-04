@@ -21,7 +21,42 @@ let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 - `audioCtx.resume()`을 play 버튼 클릭 핸들러에 추가
 - 녹음 시작 시에만 `resume()` 호출하는 현재 코드(line 814)로는 불충분
 
-#### BUG-P2: 비디오/오디오 동기화 드리프트 (lines 727-745, 684)
+#### BUG-P2 [CRITICAL]: 클립 썸네일 생성-파괴 무한 루프 (lines 468-623)
+
+**관련 코드:**
+- `renderClipContent()` (line 468): `el.innerHTML = ''`로 매번 전체 내용 초기화
+- `drawThumbnails()` (line 551): 초기화 후 다시 큐에 넣기
+- `processThumbQueue()` (line 580): 큐 처리 로직
+
+**문제 (5가지 복합 버그):**
+
+1. **썸네일 파괴-재생성 루프**: `renderTimeline()`이 호출될 때마다 (코드 내 15곳 이상)
+   `renderClipContent` → `el.innerHTML = ''` → 기존 썸네일 전부 삭제 → `drawThumbnails`로
+   다시 큐에 넣기. 썸네일이 뜨기도 전에 지워지고 다시 요청되는 루프 발생.
+
+2. **큐 프루닝으로 대부분 유실**: `thumbQueue.length > 30`이면 마지막 10개만 남기고 삭제.
+   파괴-재생성 루프 때문에 큐가 빠르게 쌓여 앞쪽 클립 썸네일은 영원히 미생성.
+
+3. **캐시 미존재**: 웨이브폼은 `waveformCache`로 캐싱하지만 썸네일은 캐시 없음.
+   같은 비디오 같은 프레임을 반복적으로 seek → capture.
+
+4. **재생 중 생성 중단 + 끝나면 파괴**: `state.isPlaying`이면 큐 처리 중단.
+   재생 끝나면 `renderTimeline()` → `el.innerHTML = ''`로 삭제 → 처음부터 다시.
+
+5. **seeked 이벤트 리스너 누수**: safety check에서 `onSeek()` 직접 호출 시
+   line 612의 `seeked` 리스너가 제거되지 않아 다음 썸네일 seek 시
+   이전 리스너가 잘못된 엘리먼트에 그림을 그림.
+
+**증상:** 클립 썸네일이 빈 칸으로 남거나, 잠깐 보였다가 사라지거나, 잘못된 프레임이 표시됨.
+
+**수정 방향:**
+- 썸네일 캐시 도입 (mediaId + time → dataURL 맵)
+- `renderClipContent`에서 props 변경 없으면 내용 보존 (innerHTML 초기화 금지)
+- safety check 경로에서 기존 이벤트 리스너 제거
+- 큐 프루닝 전략 개선 (FIFO 대신 우선순위 기반)
+- 재생 후 캐시된 썸네일 즉시 복원
+
+#### BUG-P3: 비디오/오디오 동기화 드리프트 (lines 727-745, 684)
 
 ```js
 // renderLoop에서 dt 기반으로 시간 전진
@@ -40,7 +75,7 @@ if (Math.abs(v.currentTime - clipTime) > 0.3) v.currentTime = clipTime;
 - threshold를 0.1초로 줄이거나 비디오 currentTime을 master clock으로 사용
 - Web Audio API의 `currentTime`을 master clock으로 사용하는 방식 검토
 
-#### BUG-P3: iOS에서 다중 Audio 엘리먼트 동시 재생 제한 (lines 713-724)
+#### BUG-P4: iOS에서 다중 Audio 엘리먼트 동시 재생 제한 (lines 713-724)
 
 ```js
 a = new Audio(media.url);
@@ -596,13 +631,14 @@ uhcut/
 | 단계 | 작업 | 파일 | 우선순위 |
 |------|------|------|----------|
 | 1-1 | AudioContext 초기화 수정 | script.js:37 | P0 |
-| 1-2 | 익스포트 오디오 트랙 누락 수정 | script.js:1062-1074 | P0 |
-| 1-3 | createMediaElementSource 중복 호출 방지 | script.js:1066 | P0 |
-| 1-4 | 프리뷰 동기화 드리프트 수정 | script.js:684, 727-745 | P1 |
-| 1-5 | iOS MediaRecorder 호환성 개선 | script.js:1077-1086 | P1 |
-| 1-6 | 캔버스 빈 프레임 방지 | script.js:1161-1181 | P1 |
-| 1-7 | 메모리 관리 개선 (timeslice) | script.js:1090, 1147 | P2 |
-| 1-8 | iOS 다중 Audio 엘리먼트 제한 대응 | script.js:713-724 | P2 |
+| 1-2 | **클립 썸네일 파괴-재생성 루프 수정 + 캐시 도입** | script.js:468-623 | **P0** |
+| 1-3 | 익스포트 오디오 트랙 누락 수정 | script.js:1062-1074 | P0 |
+| 1-4 | createMediaElementSource 중복 호출 방지 | script.js:1066 | P0 |
+| 1-5 | 프리뷰 동기화 드리프트 수정 | script.js:684, 727-745 | P1 |
+| 1-6 | iOS MediaRecorder 호환성 개선 | script.js:1077-1086 | P1 |
+| 1-7 | 캔버스 빈 프레임 방지 | script.js:1161-1181 | P1 |
+| 1-8 | 메모리 관리 개선 (timeslice) | script.js:1090, 1147 | P2 |
+| 1-9 | iOS 다중 Audio 엘리먼트 제한 대응 | script.js:713-724 | P2 |
 
 ### Phase 2: 코드 모듈화 & 테스트 기반
 

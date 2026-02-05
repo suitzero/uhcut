@@ -4,7 +4,9 @@
   "description": "\"# uhcut\"",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node test/run.js",
+    "build:android": "npx cap sync android",
+    "build:ios": "npx cap sync ios"
   },
   "repository": {
     "type": "git",
@@ -21,6 +23,7 @@
   "dependencies": {
     "@capacitor/cli": "^7.4.4",
     "@capacitor/core": "^7.4.4",
+    "@capacitor/android": "^7.4.4",
     "@capacitor/ios": "^7.4.4"
   }
 }

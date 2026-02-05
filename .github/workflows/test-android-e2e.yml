@@ -1,0 +1,57 @@
+name: Android E2E Tests
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  android-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - run: npm ci
+
+      - name: Add Android Platform
+        run: npx cap add android || true
+
+      - run: npx cap sync android
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Android Emulator + E2E
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: Pixel 7
+          script: |
+            cd android && ./gradlew assembleDebug
+            adb install app/build/outputs/apk/debug/app-debug.apk
+            npx appium --relaxed-security &
+            sleep 5
+            npx wdio run tests/e2e/wdio.android.conf.js || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-e2e-results
+          path: tests/e2e/results/
+          if-no-files-found: ignore

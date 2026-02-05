@@ -33,8 +33,13 @@ const elements = {
     saveExportBtn: document.getElementById('save-export-btn')
 };
 
-// Global Audio Context (Singleton)
-let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// Global Audio Context (lazy initialized on first user interaction)
+let audioCtx = null;
+function getAudioCtx() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+}
 const audioPool = {}; // clipId -> AudioElement
 
 // Constants
@@ -504,7 +509,7 @@ async function drawWaveform(container, clip, media) {
         try {
             const resp = await fetch(media.url);
             const ab = await resp.arrayBuffer();
-            buffer = await audioCtx.decodeAudioData(ab);
+            buffer = await getAudioCtx().decodeAudioData(ab);
             waveformCache[media.id] = buffer;
         } catch (e) { return; }
     }
@@ -543,10 +548,15 @@ async function drawWaveform(container, clip, media) {
     container.insertBefore(canvas, container.firstChild);
 }
 
-// Global Thumbnail Generator
+// Global Thumbnail Generator with Cache
 let thumbVideo = null;
 const thumbQueue = [];
 let isProcessingThumbs = false;
+const thumbnailCache = {}; // "url|time" -> dataURL
+
+function thumbCacheKey(url, time) {
+    return url + '|' + time.toFixed(2);
+}
 
 function drawThumbnails(container, clip, media) {
     const strip = document.createElement('div');
@@ -568,7 +578,15 @@ function drawThumbnails(container, clip, media) {
 
         const relativeTime = (i * thumbWidth) / state.zoom;
         const time = clip.offset + relativeTime;
-        if (time < media.duration) queueThumbnail(media.url, time, thumbDiv);
+        if (time < media.duration) {
+            // Check cache first
+            const key = thumbCacheKey(media.url, time);
+            if (thumbnailCache[key]) {
+                thumbDiv.style.backgroundImage = `url(${thumbnailCache[key]})`;
+            } else {
+                queueThumbnail(media.url, time, thumbDiv);
+            }
+        }
     }
 }
 
@@ -580,33 +598,61 @@ function queueThumbnail(url, time, el) {
 function processThumbQueue() {
     if (isProcessingThumbs || thumbQueue.length === 0 || state.isPlaying) return;
 
-    if (thumbQueue.length > 30) thumbQueue.splice(0, thumbQueue.length - 10);
+    // Less aggressive pruning: keep last 50 instead of 10
+    if (thumbQueue.length > 100) thumbQueue.splice(0, thumbQueue.length - 50);
 
     isProcessingThumbs = true;
     const task = thumbQueue.shift();
 
+    // Skip if element is detached from DOM (clip was re-rendered)
+    if (!task.el.isConnected) {
+        isProcessingThumbs = false;
+        setTimeout(processThumbQueue, 5);
+        return;
+    }
+
     if (!thumbVideo) {
         thumbVideo = document.createElement('video');
         thumbVideo.muted = true;
+        thumbVideo.playsInline = true;
         thumbVideo.style.display = 'none';
-        // IMPORTANT: Must be in DOM to work reliably in some browsers
         document.body.appendChild(thumbVideo);
     }
 
+    let handled = false;
     const onSeek = () => {
+        if (handled) return;
+        handled = true;
+        // Remove the other listener to prevent leak
+        thumbVideo.removeEventListener('seeked', onSeek);
+        thumbVideo.removeEventListener('error', onError);
+
         const canvas = document.createElement('canvas');
         canvas.width = 160;
         canvas.height = 90;
         canvas.getContext('2d').drawImage(thumbVideo, 0, 0, canvas.width, canvas.height);
-        task.el.style.backgroundImage = `url(${canvas.toDataURL()})`;
+        const dataUrl = canvas.toDataURL();
+
+        // Store in cache
+        const key = thumbCacheKey(task.url, task.time);
+        thumbnailCache[key] = dataUrl;
+
+        // Apply only if element is still in DOM
+        if (task.el.isConnected) {
+            task.el.style.backgroundImage = `url(${dataUrl})`;
+        }
 
         isProcessingThumbs = false;
-        setTimeout(processThumbQueue, 20); // Small delay to yield UI
+        setTimeout(processThumbQueue, 10);
     };
 
     const onError = () => {
+        if (handled) return;
+        handled = true;
+        thumbVideo.removeEventListener('seeked', onSeek);
+        thumbVideo.removeEventListener('error', onError);
         isProcessingThumbs = false;
-        setTimeout(processThumbQueue, 20);
+        setTimeout(processThumbQueue, 10);
     };
 
     thumbVideo.addEventListener('seeked', onSeek, { once: true });
@@ -614,11 +660,27 @@ function processThumbQueue() {
 
     if (thumbVideo.src !== task.url) thumbVideo.src = task.url;
 
-    // Safety check for ready state
     if (thumbVideo.readyState >= 2 && thumbVideo.src === task.url && Math.abs(thumbVideo.currentTime - task.time) < 0.1) {
-         onSeek(); // Already there
+        // Already at the right frame — call directly and clean up listener
+        thumbVideo.removeEventListener('seeked', onSeek);
+        thumbVideo.removeEventListener('error', onError);
+        handled = true;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 160;
+        canvas.height = 90;
+        canvas.getContext('2d').drawImage(thumbVideo, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL();
+        const key = thumbCacheKey(task.url, task.time);
+        thumbnailCache[key] = dataUrl;
+        if (task.el.isConnected) {
+            task.el.style.backgroundImage = `url(${dataUrl})`;
+        }
+
+        isProcessingThumbs = false;
+        setTimeout(processThumbQueue, 10);
     } else {
-         thumbVideo.currentTime = task.time;
+        thumbVideo.currentTime = task.time;
     }
 }
 
@@ -681,7 +743,7 @@ function syncMedia() {
         const media = state.media.find(m => m.id === videoClip.mediaId);
         if (v.src !== media.url) v.src = media.url;
         const clipTime = state.playbackTime - videoClip.startTime + videoClip.offset;
-        if (Math.abs(v.currentTime - clipTime) > 0.3) v.currentTime = clipTime;
+        if (Math.abs(v.currentTime - clipTime) > 0.05) v.currentTime = clipTime;
         v.muted = videoClip.muted;
         v.style.opacity = 1;
         v.style.transform = videoClip.stabilized ? 'scale(1.1)' : 'scale(1)';
@@ -718,7 +780,7 @@ function syncMedia() {
             audioPool[clip.id] = a;
         }
         const clipTime = state.playbackTime - clip.startTime + clip.offset;
-        if (Math.abs(a.currentTime - clipTime) > 0.3) a.currentTime = clipTime;
+        if (Math.abs(a.currentTime - clipTime) > 0.05) a.currentTime = clipTime;
         if (state.isPlaying && a.paused) a.play().catch(()=>{});
         if (!state.isPlaying && !a.paused) a.pause();
     });
@@ -750,6 +812,7 @@ function setupToolbar() {
     const btn = (id, fn) => document.getElementById(id).addEventListener('click', fn);
 
     btn('play-pause-btn', () => {
+        getAudioCtx();
         state.isPlaying = !state.isPlaying;
 
         const playIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
@@ -811,7 +874,7 @@ function setupToolbar() {
     btn('tool-add-media', () => elements.fileInput.click());
 
     btn('tool-record', () => {
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        getAudioCtx();
         elements.recordOverlay.classList.remove('hidden');
         startRecording();
     });
@@ -892,11 +955,9 @@ function visualizeMic(stream) {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
 
-    // Ensure context is running
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
+    const ctx2 = getAudioCtx();
+    const source = ctx2.createMediaStreamSource(stream);
+    const analyser = ctx2.createAnalyser();
     source.connect(analyser);
 
     const data = new Uint8Array(analyser.frequencyBinCount);
@@ -952,7 +1013,7 @@ async function removeSilenceTool() {
     if (!buffer) {
         const r = await fetch(media.url);
         const ab = await r.arrayBuffer();
-        buffer = await audioCtx.decodeAudioData(ab);
+        buffer = await getAudioCtx().decodeAudioData(ab);
         waveformCache[media.id] = buffer;
     }
 
@@ -1046,6 +1107,8 @@ async function removeSilenceTool() {
 }
 
 function setupExport() {
+    let activeWorker = null;
+
     elements.exportBtn.addEventListener('click', async () => {
         elements.exportOverlay.classList.remove('hidden');
         elements.exportProgress.textContent = 'Preparing...';
@@ -1055,140 +1118,130 @@ function setupExport() {
         state.isPlaying = false;
         seek(0);
 
-        const canvas = document.createElement('canvas');
-        canvas.width = 1280;
-        canvas.height = 720;
-        const ctx = canvas.getContext('2d');
-        const dest = audioCtx.createMediaStreamDestination();
+        // Collect media files as ArrayBuffers
+        const mediaFiles = {};
+        const usedMediaIds = new Set();
 
-        // Main video audio
-        try {
-             const src = audioCtx.createMediaElementSource(elements.mainVideo);
-             src.connect(dest);
-             src.connect(audioCtx.destination);
-        } catch(e) {}
+        state.tracks.video.forEach(c => usedMediaIds.add(c.mediaId));
+        state.tracks.audio.forEach(t => t.forEach(c => { if (!c.muted) usedMediaIds.add(c.mediaId); }));
 
-        const stream = canvas.captureStream(30);
-        if (dest.stream.getAudioTracks().length > 0) {
-            stream.addTrack(dest.stream.getAudioTracks()[0]);
+        for (const m of state.media) {
+            if (!usedMediaIds.has(m.id)) continue;
+            const ext = getFileExt(m.name);
+            const fileName = m.id + ext;
+            try {
+                const resp = await fetch(m.url);
+                mediaFiles[fileName] = await resp.arrayBuffer();
+            } catch (e) {
+                console.error('Failed to fetch media:', m.name, e);
+            }
         }
 
-        // Supported export types
-        const exportTypes = [
-            'video/mp4;codecs=avc1',
-            'video/mp4',
-            'video/webm;codecs=vp9',
-            'video/webm'
-        ];
-        let selectedType = '';
-        for (const t of exportTypes) {
-            if (MediaRecorder.isTypeSupported(t)) { selectedType = t; break; }
-        }
+        // Build timeline data for the worker
+        const timeline = {
+            video: state.tracks.video.map(clip => {
+                const media = state.media.find(m => m.id === clip.mediaId);
+                return {
+                    fileName: clip.mediaId + getFileExt(media.name),
+                    offset: clip.offset,
+                    duration: clip.duration,
+                    startTime: clip.startTime,
+                    stabilized: !!clip.stabilized,
+                    muted: !!clip.muted
+                };
+            }),
+            audio: state.tracks.audio.map(track =>
+                track.map(clip => {
+                    const media = state.media.find(m => m.id === clip.mediaId);
+                    return {
+                        fileName: clip.mediaId + getFileExt(media.name),
+                        offset: clip.offset,
+                        duration: clip.duration,
+                        startTime: clip.startTime,
+                        muted: !!clip.muted
+                    };
+                })
+            )
+        };
 
-        const recorder = new MediaRecorder(stream, selectedType ? { mimeType: selectedType } : undefined);
-        const chunks = [];
-        recorder.ondataavailable = e => chunks.push(e.data);
+        // Start worker
+        activeWorker = new Worker('export-worker.js');
 
-        // Max time
-        let maxTime = 0;
-        state.tracks.video.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration));
-        state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
-        if (maxTime === 0) maxTime = 1;
+        activeWorker.postMessage({
+            mediaFiles,
+            timeline,
+            outputConfig: { width: 1280, height: 720 }
+        });
 
-        recorder.onstop = async () => {
-            elements.exportProgress.textContent = 'Ready!';
-
-            const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
-            if (blob.size === 0) {
-                elements.exportProgress.textContent = 'Error: Recording Failed (Empty)';
-                return;
+        activeWorker.onmessage = ({ data: msg }) => {
+            if (msg.type === 'progress') {
+                const pct = Math.round(msg.value * 100);
+                elements.exportProgress.textContent = `Encoding... ${pct}%`;
             }
 
-            elements.cancelExportBtn.style.display = 'none';
-            elements.saveExportBtn.style.display = 'inline-block';
+            if (msg.type === 'status') {
+                elements.exportProgress.textContent = msg.text;
+            }
 
-            elements.saveExportBtn.onclick = async () => {
-                const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
-                const filename = `uhcut-export.${ext}`;
-                const file = new File([blob], filename, { type: selectedType || 'video/webm' });
+            if (msg.type === 'log') {
+                console.log('[ffmpeg]', msg.message);
+            }
 
-                // Try Share API
-                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                    try {
-                        await navigator.share({
-                            files: [file],
-                            title: 'UhCut Export',
-                            text: 'Created with UhCut'
-                        });
-                        elements.exportOverlay.classList.add('hidden');
-                        return;
-                    } catch (e) {
-                        console.warn("Share failed/cancelled", e);
+            if (msg.type === 'done') {
+                const blob = new Blob([msg.data], { type: 'video/mp4' });
+                elements.exportProgress.textContent = 'Done!';
+                elements.cancelExportBtn.style.display = 'none';
+                elements.saveExportBtn.style.display = 'inline-block';
+
+                elements.saveExportBtn.onclick = async () => {
+                    const filename = 'uhcut-export.mp4';
+                    const file = new File([blob], filename, { type: 'video/mp4' });
+
+                    if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                        try {
+                            await navigator.share({ files: [file], title: 'UhCut Export' });
+                            elements.exportOverlay.classList.add('hidden');
+                            return;
+                        } catch (e) {
+                            console.warn('Share cancelled', e);
+                        }
                     }
-                }
 
-                // Fallback
-                const url = URL.createObjectURL(blob);
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-                if (isIOS) {
-                    window.open(url, '_blank');
-                } else {
+                    // Fallback download
+                    const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = filename;
                     a.click();
-                }
+                    setTimeout(() => {
+                        URL.revokeObjectURL(url);
+                        elements.exportOverlay.classList.add('hidden');
+                    }, 2000);
+                };
 
-                setTimeout(() => elements.exportOverlay.classList.add('hidden'), 2000);
-            };
+                activeWorker = null;
+            }
+
+            if (msg.type === 'error') {
+                elements.exportProgress.textContent = 'Error: ' + msg.message;
+                elements.cancelExportBtn.style.display = 'inline-block';
+                activeWorker = null;
+            }
         };
 
-        recorder.start();
-        state.isPlaying = true;
-
-        function recLoop() {
-            if (!state.isPlaying || state.playbackTime >= maxTime) {
-                recorder.stop();
-                state.isPlaying = false;
-                return;
-            }
-
-            // Progress
-            const pct = Math.floor((state.playbackTime / maxTime) * 100);
-            elements.exportProgress.textContent = `${pct}%`;
-
-            // Handle Stabilization Crop
-            const currentClip = state.tracks.video.find(c =>
-                state.playbackTime >= c.startTime &&
-                state.playbackTime < c.startTime + c.duration
-            );
-
-            if (currentClip && currentClip.stabilized) {
-                const vw = elements.mainVideo.videoWidth;
-                const vh = elements.mainVideo.videoHeight;
-                if (vw && vh) {
-                    const sw = vw / 1.1;
-                    const sh = vh / 1.1;
-                    const sx = (vw - sw) / 2;
-                    const sy = (vh - sh) / 2;
-                    ctx.drawImage(elements.mainVideo, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-                } else {
-                    ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
-                }
-            } else {
-                ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
-            }
-            requestAnimationFrame(recLoop);
-        }
-        recLoop();
-
         elements.cancelExportBtn.onclick = () => {
-            recorder.stop();
-            state.isPlaying = false;
+            if (activeWorker) {
+                activeWorker.terminate();
+                activeWorker = null;
+            }
             elements.exportOverlay.classList.add('hidden');
         };
     });
+}
+
+function getFileExt(name) {
+    const dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.substring(dot) : '.mp4';
 }
 
 init();

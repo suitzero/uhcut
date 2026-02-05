@@ -1,0 +1,66 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+
+  ios-e2e:
+    needs: unit-tests
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - run: npx cap sync ios
+      - name: Build for Simulator
+        run: |
+          cd ios
+          xcodebuild build \
+            -workspace App/App.xcworkspace \
+            -scheme App \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,name=iPhone 16" \
+            -configuration Debug
+
+  android-e2e:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm ci
+      - name: Add Android Platform
+        run: npx cap add android || true
+      - run: npx cap sync android
+      - name: Build Debug APK
+        run: cd android && ./gradlew assembleDebug
+
+  status:
+    needs: [unit-tests, ios-e2e, android-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All checks passed"

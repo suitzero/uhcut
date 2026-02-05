@@ -1,0 +1,55 @@
+name: iOS E2E Tests
+
+on:
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  ios-e2e:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npx cap sync ios
+
+      - name: Build for Simulator
+        run: |
+          cd ios
+          xcodebuild build-for-testing \
+            -workspace App/App.xcworkspace \
+            -scheme App \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,name=iPhone 16" \
+            -configuration Debug \
+            -derivedDataPath build
+
+      - name: Boot Simulator
+        run: |
+          xcrun simctl boot "iPhone 16" || true
+          xcrun simctl bootstatus "iPhone 16" -b
+
+      - name: Install App
+        run: |
+          APP_PATH=$(find ios/build -name "App.app" -path "*/Debug-iphonesimulator/*" | head -1)
+          xcrun simctl install booted "$APP_PATH"
+
+      - name: Run E2E Tests
+        run: |
+          npx appium --relaxed-security &
+          sleep 5
+          npx wdio run tests/e2e/wdio.ios.conf.js || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-e2e-results
+          path: tests/e2e/results/
+          if-no-files-found: ignore

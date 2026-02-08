@@ -3,7 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>method</key>
-    <string>app-store</string>
+    <string>app-store-connect</string>
+    <key>provisioningProfiles</key>
+    <dict>
+        <key>com.uhcut.app</key>
+        <string>UhCut App Store</string>
+    </dict>
     <key>teamID</key>
     <string>2DHRW47G37</string>
     <key>signingStyle</key>

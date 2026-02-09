@@ -160,7 +160,9 @@ function processFile(file, startTime = null) {
             url,
             type,
             name: file.name,
-            duration: element.duration || 0
+            duration: element.duration || 0,
+            videoWidth: type === 'video' ? (element.videoWidth || 0) : 0,
+            videoHeight: type === 'video' ? (element.videoHeight || 0) : 0
         };
         state.media.push(item);
 
@@ -438,18 +440,23 @@ function renderTrack(clips, type, index) {
         const width = Math.max(2, clip.duration * state.zoom);
         const left = clip.startTime * state.zoom;
 
+        const clipMedia = state.media.find(m => m.id === clip.mediaId);
+        const isRecordingClip = clipMedia && clipMedia._recording;
+
         if (!el) {
             el = document.createElement('div');
             el.className = 'clip';
             el.dataset.clipId = clip.id;
             el.dataset.type = type;
             trackEl.appendChild(el);
-            renderClipContent(el, clip, type);
+            if (!isRecordingClip) renderClipContent(el, clip, type);
         } else {
             el.dataset.stale = 'false';
-            const prevProps = el.dataset.props;
-            const newProps = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}_${!!clip.stabilized}`;
-            if (prevProps !== newProps) renderClipContent(el, clip, type);
+            if (!isRecordingClip) {
+                const prevProps = el.dataset.props;
+                const newProps = `${clip.mediaId}_${clip.offset.toFixed(3)}_${clip.duration.toFixed(3)}_${state.zoom.toFixed(1)}_${!!clip.stabilized}`;
+                if (prevProps !== newProps) renderClipContent(el, clip, type);
+            }
         }
 
         el.style.left = left + 'px';
@@ -466,12 +473,15 @@ function renderTrack(clips, type, index) {
 }
 
 function renderClipContent(el, clip, type) {
-    el.innerHTML = '';
     const media = state.media.find(m => m.id === clip.mediaId);
     if (!media) {
+        el.innerHTML = '';
         el.textContent = 'Missing';
         return;
     }
+    // Don't re-render recording clips - they manage their own content
+    if (media._recording) return;
+    el.innerHTML = '';
 
     const label = document.createElement('span');
     label.className = 'clip-label';
@@ -497,6 +507,7 @@ function renderClipContent(el, clip, type) {
 }
 
 const waveformCache = {};
+const thumbCache = {};
 
 async function drawWaveform(container, clip, media) {
     let buffer = waveformCache[media.id];
@@ -548,6 +559,16 @@ let thumbVideo = null;
 const thumbQueue = [];
 let isProcessingThumbs = false;
 
+// Inline Recording State
+let isRecording = false;
+let recordingClipId = null;
+let recordingMediaId = null;
+let recordingStartPlaybackTime = 0;
+let recordingAnalyser = null;
+let recordingSource = null;
+let recordingAnimFrame = null;
+let recordingWaveformData = [];
+
 function drawThumbnails(container, clip, media) {
     const strip = document.createElement('div');
     strip.className = 'clip-filmstrip';
@@ -568,28 +589,54 @@ function drawThumbnails(container, clip, media) {
 
         const relativeTime = (i * thumbWidth) / state.zoom;
         const time = clip.offset + relativeTime;
-        if (time < media.duration) queueThumbnail(media.url, time, thumbDiv);
+        if (time < media.duration) {
+            const cacheKey = media.url + '_' + (Math.round(time * 2) / 2).toFixed(1);
+            if (thumbCache[cacheKey]) {
+                thumbDiv.style.backgroundImage = `url(${thumbCache[cacheKey]})`;
+            } else {
+                queueThumbnail(media.url, time, thumbDiv, cacheKey);
+            }
+        }
     }
 }
 
-function queueThumbnail(url, time, el) {
-    thumbQueue.push({ url, time, el });
+function queueThumbnail(url, time, el, cacheKey) {
+    thumbQueue.push({ url, time, el, cacheKey });
     processThumbQueue();
 }
 
 function processThumbQueue() {
-    if (isProcessingThumbs || thumbQueue.length === 0 || state.isPlaying) return;
-
-    if (thumbQueue.length > 30) thumbQueue.splice(0, thumbQueue.length - 10);
+    if (isProcessingThumbs || thumbQueue.length === 0) return;
 
     isProcessingThumbs = true;
     const task = thumbQueue.shift();
 
+    // Check if element is still in DOM (clip may have been removed)
+    if (!task.el.parentNode) {
+        isProcessingThumbs = false;
+        if (thumbQueue.length > 0) setTimeout(processThumbQueue, 5);
+        return;
+    }
+
+    // Serve from cache if available
+    if (task.cacheKey && thumbCache[task.cacheKey]) {
+        task.el.style.backgroundImage = `url(${thumbCache[task.cacheKey]})`;
+        isProcessingThumbs = false;
+        if (thumbQueue.length > 0) setTimeout(processThumbQueue, 5);
+        return;
+    }
+
+    // During playback, skip video seek operations (serve cached only)
+    if (state.isPlaying) {
+        isProcessingThumbs = false;
+        return;
+    }
+
     if (!thumbVideo) {
         thumbVideo = document.createElement('video');
         thumbVideo.muted = true;
+        thumbVideo.preload = 'auto';
         thumbVideo.style.display = 'none';
-        // IMPORTANT: Must be in DOM to work reliably in some browsers
         document.body.appendChild(thumbVideo);
     }
 
@@ -598,10 +645,12 @@ function processThumbQueue() {
         canvas.width = 160;
         canvas.height = 90;
         canvas.getContext('2d').drawImage(thumbVideo, 0, 0, canvas.width, canvas.height);
-        task.el.style.backgroundImage = `url(${canvas.toDataURL()})`;
+        const dataUrl = canvas.toDataURL();
+        task.el.style.backgroundImage = `url(${dataUrl})`;
+        if (task.cacheKey) thumbCache[task.cacheKey] = dataUrl;
 
         isProcessingThumbs = false;
-        setTimeout(processThumbQueue, 20); // Small delay to yield UI
+        setTimeout(processThumbQueue, 20);
     };
 
     const onError = () => {
@@ -614,9 +663,8 @@ function processThumbQueue() {
 
     if (thumbVideo.src !== task.url) thumbVideo.src = task.url;
 
-    // Safety check for ready state
     if (thumbVideo.readyState >= 2 && thumbVideo.src === task.url && Math.abs(thumbVideo.currentTime - task.time) < 0.1) {
-         onSeek(); // Already there
+         onSeek();
     } else {
          thumbVideo.currentTime = task.time;
     }
@@ -812,17 +860,11 @@ function setupToolbar() {
 
     btn('tool-record', () => {
         if (audioCtx.state === 'suspended') audioCtx.resume();
-        elements.recordOverlay.classList.remove('hidden');
-        startRecording();
-    });
-
-    document.getElementById('cancel-record-btn').addEventListener('click', () => {
-        stopRecording(false);
-        elements.recordOverlay.classList.add('hidden');
-    });
-    document.getElementById('stop-record-btn').addEventListener('click', () => {
-        stopRecording(true);
-        elements.recordOverlay.classList.add('hidden');
+        if (isRecording) {
+            stopInlineRecording();
+        } else {
+            startInlineRecording();
+        }
     });
 
     btn('tool-extract-audio', extractAudio);
@@ -849,7 +891,7 @@ function stabilizeClip() {
     }, 1500);
 }
 
-function startRecording() {
+function startInlineRecording() {
     navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
         recordingStream = stream;
 
@@ -867,61 +909,176 @@ function startRecording() {
         chunks = [];
         mediaRecorder.ondataavailable = e => chunks.push(e.data);
         mediaRecorder.start();
-        visualizeMic(stream);
+
+        isRecording = true;
+        recordingStartPlaybackTime = state.playbackTime;
+        recordingWaveformData = [];
+
+        const mediaId = 'rec_' + Date.now();
+        const clipId = 'clip_rec_' + Date.now();
+        recordingClipId = clipId;
+        recordingMediaId = mediaId;
+
+        // Create placeholder media entry
+        state.media.push({
+            id: mediaId,
+            file: null,
+            url: null,
+            type: 'audio',
+            name: 'Recording...',
+            duration: 0,
+            _recording: true
+        });
+
+        saveState();
+
+        // Create clip on audio track 0
+        state.tracks.audio[0].push({
+            id: clipId,
+            mediaId: mediaId,
+            startTime: recordingStartPlaybackTime,
+            duration: 0.1,
+            offset: 0,
+            type: 'audio',
+            muted: false
+        });
+
+        // Start playback if not already playing
+        if (!state.isPlaying) {
+            document.getElementById('play-pause-btn').click();
+        }
+
+        // Setup analyser for live waveform
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        recordingSource = audioCtx.createMediaStreamSource(stream);
+        recordingAnalyser = audioCtx.createAnalyser();
+        recordingAnalyser.fftSize = 256;
+        recordingSource.connect(recordingAnalyser);
+
+        // Visual feedback on mic button
+        const recBtn = document.getElementById('tool-record');
+        recBtn.classList.add('recording');
+
+        renderTimeline();
+        updateRecordingClip();
     });
 }
 
-function stopRecording(save) {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.onstop = () => {
-            if (save) {
-                const mime = mediaRecorder.mimeType;
-                const ext = mime.includes('mp4') ? 'mp4' : (mime.includes('aac') ? 'aac' : 'webm');
-                const blob = new Blob(chunks, { type: mime });
-                const file = new File([blob], `Rec_${Date.now()}.${ext}`, { type: mime });
-                processFile(file);
-            }
-            if (recordingStream) recordingStream.getTracks().forEach(t => t.stop());
-        };
-        mediaRecorder.stop();
+function updateRecordingClip() {
+    if (!isRecording) return;
+
+    const clip = findClip(recordingClipId);
+    if (!clip) { isRecording = false; return; }
+
+    // Update duration based on playback time
+    const elapsed = state.playbackTime - recordingStartPlaybackTime;
+    clip.duration = Math.max(0.1, elapsed);
+
+    // Update media duration
+    const media = state.media.find(m => m.id === recordingMediaId);
+    if (media) media.duration = clip.duration;
+
+    // Collect waveform peak sample
+    if (recordingAnalyser) {
+        const data = new Uint8Array(recordingAnalyser.frequencyBinCount);
+        recordingAnalyser.getByteTimeDomainData(data);
+        let peak = 0;
+        for (let i = 0; i < data.length; i++) {
+            const v = Math.abs(data[i] / 128.0 - 1.0);
+            if (v > peak) peak = v;
+        }
+        recordingWaveformData.push(peak);
     }
-}
 
-function visualizeMic(stream) {
-    const canvas = document.getElementById('waveform-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    // Update the clip element directly (no full re-render)
+    const clipEl = document.querySelector(`.clip[data-clip-id="${recordingClipId}"]`);
+    if (clipEl) {
+        const width = Math.max(2, clip.duration * state.zoom);
+        clipEl.style.width = width + 'px';
+        clipEl.style.left = (clip.startTime * state.zoom) + 'px';
 
-    // Ensure context is running
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+        // Create or update recording waveform canvas
+        let canvas = clipEl.querySelector('.recording-waveform');
+        if (!canvas) {
+            clipEl.innerHTML = '';
+            const label = document.createElement('span');
+            label.className = 'clip-label';
+            label.textContent = 'Recording...';
+            label.style.color = '#ff4444';
+            clipEl.appendChild(label);
 
-    const source = audioCtx.createMediaStreamSource(stream);
-    const analyser = audioCtx.createAnalyser();
-    source.connect(analyser);
+            canvas = document.createElement('canvas');
+            canvas.className = 'recording-waveform clip-waveform';
+            clipEl.appendChild(canvas);
+        }
 
-    const data = new Uint8Array(analyser.frequencyBinCount);
+        const cw = Math.max(1, Math.ceil(width));
+        if (canvas.width !== cw) canvas.width = cw;
+        canvas.height = TRACK_HEIGHT;
 
-    function draw() {
-        if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
-        requestAnimationFrame(draw);
-        analyser.getByteTimeDomainData(data);
-
-        ctx.fillStyle = '#222';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.strokeStyle = '#00ffcc';
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#ff4444';
+        ctx.lineWidth = 1;
         ctx.beginPath();
 
-        const slice = canvas.width / data.length;
-        let x = 0;
-        for (let i = 0; i < data.length; i++) {
-            const v = data[i] / 128.0;
-            const y = v * canvas.height / 2;
-            if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-            x += slice;
+        const totalSamples = recordingWaveformData.length;
+        for (let x = 0; x < canvas.width; x++) {
+            const idx = Math.floor(x * totalSamples / canvas.width);
+            const peak = recordingWaveformData[idx] || 0;
+            const h = peak * canvas.height;
+            ctx.moveTo(x, (canvas.height - h) / 2);
+            ctx.lineTo(x, (canvas.height + h) / 2);
         }
         ctx.stroke();
     }
-    draw();
+
+    recordingAnimFrame = requestAnimationFrame(updateRecordingClip);
+}
+
+function stopInlineRecording() {
+    isRecording = false;
+    if (recordingAnimFrame) cancelAnimationFrame(recordingAnimFrame);
+
+    // Reset mic button
+    const recBtn = document.getElementById('tool-record');
+    recBtn.classList.remove('recording');
+
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.onstop = () => {
+            const mime = mediaRecorder.mimeType;
+            const ext = mime.includes('mp4') ? 'mp4' : (mime.includes('aac') ? 'aac' : 'webm');
+            const blob = new Blob(chunks, { type: mime });
+            const url = URL.createObjectURL(blob);
+
+            // Finalize the media entry
+            const media = state.media.find(m => m.id === recordingMediaId);
+            const clip = findClip(recordingClipId);
+            if (media && clip) {
+                media.file = new File([blob], `Rec_${Date.now()}.${ext}`, { type: mime });
+                media.url = url;
+                media.name = `Rec_${new Date().toLocaleTimeString()}`;
+                media.duration = clip.duration;
+                delete media._recording;
+            }
+
+            if (recordingStream) recordingStream.getTracks().forEach(t => t.stop());
+
+            recordingClipId = null;
+            recordingMediaId = null;
+            recordingAnalyser = null;
+            recordingSource = null;
+            recordingWaveformData = [];
+
+            renderTimeline();
+        };
+        mediaRecorder.stop();
+    }
+
+    // Pause playback
+    if (state.isPlaying) {
+        document.getElementById('play-pause-btn').click();
+    }
 }
 
 function extractAudio() {
@@ -1055,9 +1212,28 @@ function setupExport() {
         state.isPlaying = false;
         seek(0);
 
+        // Determine export dimensions from source video (preserve portrait/landscape)
+        let exportWidth = 1280;
+        let exportHeight = 720;
+        const firstVideoClip = state.tracks.video[0];
+        if (firstVideoClip) {
+            const firstMedia = state.media.find(m => m.id === firstVideoClip.mediaId);
+            if (firstMedia && firstMedia.videoWidth && firstMedia.videoHeight) {
+                exportWidth = firstMedia.videoWidth;
+                exportHeight = firstMedia.videoHeight;
+                // Cap at 1920 on the longer side
+                const maxDim = 1920;
+                if (exportWidth > maxDim || exportHeight > maxDim) {
+                    const scale = maxDim / Math.max(exportWidth, exportHeight);
+                    exportWidth = Math.round(exportWidth * scale);
+                    exportHeight = Math.round(exportHeight * scale);
+                }
+            }
+        }
+
         const canvas = document.createElement('canvas');
-        canvas.width = 1280;
-        canvas.height = 720;
+        canvas.width = exportWidth;
+        canvas.height = exportHeight;
         const ctx = canvas.getContext('2d');
         const dest = audioCtx.createMediaStreamDestination();
 

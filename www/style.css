@@ -7,7 +7,7 @@
     --track-bg: #333;
     --clip-video: #4a90e2;
     --clip-audio: #50e3c2;
-    --timeline-height: 200px;
+    --timeline-height: 160px;
 }
 
 * {
@@ -114,6 +114,7 @@ button:hover {
     padding: 0 10px;
     gap: 10px;
     overflow-x: auto;
+    overflow-y: hidden;
     border-top: 1px solid var(--border-color);
 }
 
@@ -247,11 +248,9 @@ button:hover {
         flex-direction: column;
     }
     .preview-area {
-        height: 40vh;
-    }
-    .timeline-container {
         flex: 1;
     }
+    /* Timeline uses fixed height from root var */
 }
 .separator {
     width: 1px;

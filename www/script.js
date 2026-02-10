@@ -35,7 +35,14 @@ const elements = {
 
 // Global Audio Context (Singleton)
 let audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-const audioPool = {}; // clipId -> AudioElement
+const masterGain = audioCtx.createGain();
+masterGain.connect(audioCtx.destination);
+const exportDest = audioCtx.createMediaStreamDestination();
+masterGain.connect(exportDest);
+
+const audioPool = {}; // clipId -> { audio, source, gain }
+let mainVideoSource = null;
+let mainVideoGain = null;
 
 // Constants
 const TRACK_HEIGHT = 50;
@@ -47,6 +54,7 @@ function init() {
     setupToolbar();
     setupKeyboardShortcuts();
     setupExport();
+    setupVolumeControl();
 
     requestAnimationFrame(renderLoop);
     renderTimeline();
@@ -185,6 +193,7 @@ function addToTimelineSmart(item) {
         offset: 0,
         type: item.type,
         muted: false,
+        volume: 1.0,
         startTime: 0
     };
 
@@ -227,7 +236,8 @@ function addClipToTimeline(mediaItem, startTime) {
         duration: mediaItem.duration,
         offset: 0,
         type: mediaItem.type,
-        muted: false
+        muted: false,
+        volume: 1.0
     };
 
     if (mediaItem.type === 'video') {
@@ -258,6 +268,7 @@ function checkCollision(trackClips, newClip) {
 let isDragging = false;
 let dragClipId = null;
 let dragStartX = 0;
+let dragStartY = 0;
 let dragOriginalStart = 0;
 
 function setupTimelineInteraction() {
@@ -317,12 +328,17 @@ function handleMouseDown(e) {
     isDragging = true;
     dragClipId = clipEl.dataset.clipId;
     dragStartX = e.touches ? e.touches[0].clientX : e.clientX;
+    dragStartY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    const clip = findClip(dragClipId);
-    if (clip) {
-        dragOriginalStart = clip.startTime;
+    const loc = findClipLocation(dragClipId);
+    if (loc) {
+        dragOriginalStart = loc.clip.startTime;
         state.selectedClipId = dragClipId;
         renderTimeline();
+
+        // Bring to front
+        const el = document.querySelector(`.clip[data-clip-id="${dragClipId}"]`);
+        if(el) el.style.zIndex = 100;
     }
 }
 
@@ -330,19 +346,56 @@ function handleMouseMove(e) {
     if (!isDragging || !dragClipId) return;
 
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
     const deltaPx = clientX - dragStartX;
+    const deltaY = clientY - dragStartY;
+
     const deltaSec = deltaPx / state.zoom;
 
-    const clip = findClip(dragClipId);
-    if (clip) {
-        clip.startTime = Math.max(0, dragOriginalStart + deltaSec);
+    const loc = findClipLocation(dragClipId);
+    if (loc) {
+        loc.clip.startTime = Math.max(0, dragOriginalStart + deltaSec);
         const el = document.querySelector(`.clip[data-clip-id="${dragClipId}"]`);
-        if (el) el.style.left = (clip.startTime * state.zoom) + 'px';
+        if (el) {
+            el.style.left = (loc.clip.startTime * state.zoom) + 'px';
+            // Vertical movement visual
+            if (loc.type === 'audio') {
+                 el.style.transform = `translateY(${deltaY}px)`;
+            }
+        }
     }
 }
 
-function handleMouseUp() {
+function handleMouseUp(e) {
     if (isDragging) {
+        // Check for track change
+        const clientY = e.changedTouches ? e.changedTouches[0].clientY : e.clientY;
+        const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+
+        const loc = findClipLocation(dragClipId);
+        if (loc && loc.type === 'audio') {
+            // Find track under mouse
+            // We need to hide the dragged element momentarily to find what's underneath?
+            // Or use elementsFromPoint?
+            const el = document.querySelector(`.clip[data-clip-id="${dragClipId}"]`);
+            if(el) el.style.display = 'none';
+
+            const elementBelow = document.elementFromPoint(clientX, clientY);
+            if(el) el.style.display = ''; // Restore
+
+            const trackEl = elementBelow ? elementBelow.closest('.track') : null;
+            if (trackEl && trackEl.dataset.type === 'audio') {
+                const targetIndex = parseInt(trackEl.dataset.trackId.split('-')[1]);
+                if (!isNaN(targetIndex) && targetIndex !== loc.index) {
+                     // Move Clip
+                     loc.array.splice(loc.array.indexOf(loc.clip), 1);
+                     if (!state.tracks.audio[targetIndex]) state.tracks.audio[targetIndex] = [];
+                     state.tracks.audio[targetIndex].push(loc.clip);
+                }
+            }
+        }
+
         isDragging = false;
         dragClipId = null;
         renderTimeline();
@@ -351,11 +404,17 @@ function handleMouseUp() {
 }
 
 function findClip(id) {
+    const loc = findClipLocation(id);
+    return loc ? loc.clip : null;
+}
+
+function findClipLocation(id) {
     let c = state.tracks.video.find(c => c.id === id);
-    if (c) return c;
-    for (const track of state.tracks.audio) {
-        c = track.find(k => k.id === id);
-        if (c) return c;
+    if (c) return { clip: c, type: 'video', index: 0, array: state.tracks.video };
+
+    for (let i = 0; i < state.tracks.audio.length; i++) {
+        c = state.tracks.audio[i].find(k => k.id === id);
+        if (c) return { clip: c, type: 'audio', index: i, array: state.tracks.audio[i] };
     }
     return null;
 }
@@ -719,6 +778,16 @@ function updatePlayhead() {
 }
 
 function syncMedia() {
+    // Setup Main Video Audio Graph
+    if (!mainVideoSource && elements.mainVideo) {
+        try {
+            mainVideoSource = audioCtx.createMediaElementSource(elements.mainVideo);
+            mainVideoGain = audioCtx.createGain();
+            mainVideoSource.connect(mainVideoGain);
+            mainVideoGain.connect(masterGain);
+        } catch(e) { /* ignore already connected */ }
+    }
+
     const v = elements.mainVideo;
     const videoClip = state.tracks.video.find(c =>
         state.playbackTime >= c.startTime &&
@@ -730,7 +799,15 @@ function syncMedia() {
         if (v.src !== media.url) v.src = media.url;
         const clipTime = state.playbackTime - videoClip.startTime + videoClip.offset;
         if (Math.abs(v.currentTime - clipTime) > 0.3) v.currentTime = clipTime;
-        v.muted = videoClip.muted;
+
+        // Volume Control
+        if (mainVideoGain) {
+            const vol = videoClip.muted ? 0 : (videoClip.volume !== undefined ? videoClip.volume : 1.0);
+            mainVideoGain.gain.value = vol;
+        }
+        // Keep element unmuted so it feeds the source, but we control output via gain
+        v.muted = false;
+
         v.style.opacity = 1;
         v.style.transform = videoClip.stabilized ? 'scale(1.1)' : 'scale(1)';
 
@@ -738,6 +815,7 @@ function syncMedia() {
         if (!state.isPlaying && !v.paused) v.pause();
     } else {
         v.style.opacity = 0;
+        if (mainVideoGain) mainVideoGain.gain.value = 0;
         v.pause();
     }
 
@@ -751,24 +829,48 @@ function syncMedia() {
         });
     });
 
+    // Cleanup inactive
     Object.keys(audioPool).forEach(id => {
         if (!activeClips.find(c => c.id === id)) {
-            audioPool[id].pause();
+            const poolItem = audioPool[id];
+            poolItem.audio.pause();
+            // Disconnect to save resources?
+            // poolItem.source.disconnect();
+            // poolItem.gain.disconnect();
+            // No, keep connected for reuse or let GC handle if we delete?
+            // If we delete, we lose the source node which is bound to the element.
+            // Actually, we create new Audio() each time we add to pool.
+            // So we should disconnect nodes.
+            if (poolItem.gain) poolItem.gain.disconnect();
+            if (poolItem.source) poolItem.source.disconnect();
             delete audioPool[id];
         }
     });
 
     activeClips.forEach(clip => {
-        let a = audioPool[clip.id];
-        if (!a) {
+        let item = audioPool[clip.id];
+        if (!item) {
             const media = state.media.find(m => m.id === clip.mediaId);
-            a = new Audio(media.url);
-            audioPool[clip.id] = a;
+            const a = new Audio(media.url);
+            a.crossOrigin = 'anonymous'; // Safer
+
+            const source = audioCtx.createMediaElementSource(a);
+            const gain = audioCtx.createGain();
+            source.connect(gain);
+            gain.connect(masterGain);
+
+            item = { audio: a, source: source, gain: gain };
+            audioPool[clip.id] = item;
         }
+
         const clipTime = state.playbackTime - clip.startTime + clip.offset;
-        if (Math.abs(a.currentTime - clipTime) > 0.3) a.currentTime = clipTime;
-        if (state.isPlaying && a.paused) a.play().catch(()=>{});
-        if (!state.isPlaying && !a.paused) a.pause();
+        if (Math.abs(item.audio.currentTime - clipTime) > 0.3) item.audio.currentTime = clipTime;
+
+        const vol = clip.muted ? 0 : (clip.volume !== undefined ? clip.volume : 1.0);
+        item.gain.gain.value = vol;
+
+        if (state.isPlaying && item.audio.paused) item.audio.play().catch(()=>{});
+        if (!state.isPlaying && !item.audio.paused) item.audio.pause();
     });
 }
 
@@ -870,6 +972,113 @@ function setupToolbar() {
     btn('tool-extract-audio', extractAudio);
     btn('tool-silence', removeSilenceTool);
     btn('tool-stabilize', stabilizeClip);
+    btn('tool-volume', () => {
+        if (state.selectedClipId) {
+            const clip = findClip(state.selectedClipId);
+            if (clip) {
+                const vol = clip.volume !== undefined ? clip.volume : 1.0;
+                document.getElementById('volume-slider').value = vol;
+                document.getElementById('volume-value').textContent = Math.round(vol * 100) + '%';
+                document.getElementById('volume-overlay').classList.remove('hidden');
+            }
+        } else {
+            alert('Select a clip first');
+        }
+    });
+    btn('tool-export-audio-file', exportAudioFile);
+}
+
+function setupVolumeControl() {
+    const slider = document.getElementById('volume-slider');
+    const valDisplay = document.getElementById('volume-value');
+    const closeBtn = document.getElementById('close-volume-btn');
+    const overlay = document.getElementById('volume-overlay');
+
+    slider.addEventListener('input', (e) => {
+        const val = parseFloat(e.target.value);
+        valDisplay.textContent = Math.round(val * 100) + '%';
+        if (state.selectedClipId) {
+            const clip = findClip(state.selectedClipId);
+            if (clip) {
+                clip.volume = val;
+                // Immediate feedback
+                syncMedia();
+            }
+        }
+    });
+
+    closeBtn.addEventListener('click', () => {
+        overlay.classList.add('hidden');
+        saveState();
+    });
+}
+
+function exportAudioFile() {
+    elements.exportOverlay.classList.remove('hidden');
+    elements.exportProgress.textContent = 'Preparing Audio...';
+    elements.saveExportBtn.style.display = 'none';
+    elements.cancelExportBtn.style.display = 'inline-block';
+
+    state.isPlaying = false;
+    seek(0);
+
+    const dest = exportDest; // Use the global export destination
+
+    // Check support
+    let mimeType = 'audio/webm';
+    if (MediaRecorder.isTypeSupported('audio/mp4;codecs=aac')) mimeType = 'audio/mp4;codecs=aac';
+    else if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+    else if (MediaRecorder.isTypeSupported('audio/aac')) mimeType = 'audio/aac';
+
+    const recorder = new MediaRecorder(dest.stream, { mimeType });
+    const chunks = [];
+    recorder.ondataavailable = e => chunks.push(e.data);
+
+    let maxTime = 0;
+    state.tracks.video.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration));
+    state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
+    if (maxTime === 0) maxTime = 1;
+
+    recorder.onstop = () => {
+        elements.exportProgress.textContent = 'Audio Ready!';
+        const blob = new Blob(chunks, { type: mimeType });
+        elements.cancelExportBtn.style.display = 'none';
+        elements.saveExportBtn.style.display = 'inline-block';
+
+        elements.saveExportBtn.onclick = () => {
+            const ext = mimeType.includes('mp4') || mimeType.includes('aac') ? 'm4a' : 'weba';
+            const filename = `uhcut-audio.${ext}`;
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+
+            setTimeout(() => elements.exportOverlay.classList.add('hidden'), 2000);
+        };
+    };
+
+    recorder.start();
+    state.isPlaying = true;
+
+    function recLoop() {
+        if (!state.isPlaying || state.playbackTime >= maxTime) {
+            recorder.stop();
+            state.isPlaying = false;
+            return;
+        }
+        const pct = Math.floor((state.playbackTime / maxTime) * 100);
+        elements.exportProgress.textContent = `${pct}%`;
+        requestAnimationFrame(recLoop);
+    }
+    recLoop();
+
+    elements.cancelExportBtn.onclick = () => {
+        recorder.stop();
+        state.isPlaying = false;
+        elements.exportOverlay.classList.add('hidden');
+    };
 }
 
 function stabilizeClip() {
@@ -1117,46 +1326,52 @@ async function removeSilenceTool() {
     const endSample = Math.floor((clip.offset + clip.duration) * buffer.sampleRate);
     const data = buffer.getChannelData(0);
 
-    // Dynamic Threshold
+    // Dynamic Threshold Calculation
     let maxVal = 0;
-    // Scan segment to find max amplitude (step 100 for speed)
     for (let i = startSample; i < endSample; i += 100) {
         const v = Math.abs(data[i]);
         if (v > maxVal) maxVal = v;
     }
 
-    const threshold = Math.max(0.01, maxVal * 0.15); // 15% of peak
-    const minSilenceDur = 0.15;
-    const minSpeechDur = 0.15; // Kept consistent or should be 0.15? User said "minSilenceDur to 0.15" but didn't specify speech. I'll stick to 0.15 for robustness.
+    const threshold = Math.max(0.01, maxVal * 0.03); // 3% or 0.01 floor
+    const padding = 0.25; // 0.25s padding
+    const paddingSamples = Math.floor(padding * buffer.sampleRate);
+    const minSpeechDur = 0.1;
 
-    const ranges = [];
-    let isSpeech = false;
-    let rangeStart = startSample;
+    const regions = [];
+    let currentRegion = null;
 
-    for (let i = startSample; i < endSample; i += 100) {
-        const val = Math.abs(data[i]);
-        if (val > threshold && !isSpeech) {
-            ranges.push({ start: rangeStart, end: i, type: 'silence' });
-            rangeStart = i;
-            isSpeech = true;
-        } else if (val <= threshold && isSpeech) {
-            let futureSpeech = false;
-            for (let j = 1; j < (minSilenceDur * buffer.sampleRate) / 100 && (i+j*100) < endSample; j++) {
-                 if (Math.abs(data[i+j*100]) > threshold) {
-                     futureSpeech = true;
-                     break;
-                 }
-            }
-            if (!futureSpeech) {
-                ranges.push({ start: rangeStart, end: i, type: 'speech' });
-                rangeStart = i;
-                isSpeech = false;
+    // Scan with 20ms window
+    const windowSize = Math.floor(buffer.sampleRate * 0.02);
+
+    for(let i=startSample; i<endSample; i+=windowSize) {
+        let localMax = 0;
+        // Check peak in window
+        for(let j=0; j<windowSize && (i+j)<endSample; j+=10) {
+             const v = Math.abs(data[i+j]);
+             if(v > localMax) localMax = v;
+        }
+
+        if(localMax > threshold) {
+            // Speech detected
+            const start = Math.max(startSample, i - paddingSamples);
+            const end = Math.min(endSample, i + windowSize + paddingSamples);
+
+            if(!currentRegion) {
+                currentRegion = { start, end };
+                regions.push(currentRegion);
+            } else {
+                if(start <= currentRegion.end) {
+                    currentRegion.end = Math.max(currentRegion.end, end);
+                } else {
+                    currentRegion = { start, end };
+                    regions.push(currentRegion);
+                }
             }
         }
     }
-    ranges.push({ start: rangeStart, end: endSample, type: isSpeech ? 'speech' : 'silence' });
 
-    const speechSegments = ranges.filter(r => r.type === 'speech' && (r.end - r.start)/buffer.sampleRate > minSpeechDur);
+    const speechSegments = regions.filter(r => (r.end - r.start)/buffer.sampleRate > minSpeechDur);
 
     if (speechSegments.length === 0) return alert('No speech detected (threshold: ' + threshold.toFixed(4) + ')');
 
@@ -1171,11 +1386,6 @@ async function removeSilenceTool() {
 
     let insertTime = clip.startTime;
 
-    // Determine where to add new clips (original track?)
-    // We need to know which track it came from.
-    // For simplicity, video clips go to video track, audio clips to audio track 1 (or we search).
-    // Let's assume video stays video.
-
     speechSegments.forEach(seg => {
         const segDuration = (seg.end - seg.start) / buffer.sampleRate;
         const segOffset = seg.start / buffer.sampleRate;
@@ -1187,7 +1397,8 @@ async function removeSilenceTool() {
             duration: segDuration,
             offset: segOffset,
             type: clip.type,
-            muted: clip.muted
+            muted: clip.muted,
+            volume: clip.volume || 1.0
         };
 
         if (clip.type === 'video') {
@@ -1235,14 +1446,9 @@ function setupExport() {
         canvas.width = exportWidth;
         canvas.height = exportHeight;
         const ctx = canvas.getContext('2d');
-        const dest = audioCtx.createMediaStreamDestination();
 
-        // Main video audio
-        try {
-             const src = audioCtx.createMediaElementSource(elements.mainVideo);
-             src.connect(dest);
-             src.connect(audioCtx.destination);
-        } catch(e) {}
+        // Use Global Export Dest (already connected to masterGain)
+        const dest = exportDest;
 
         const stream = canvas.captureStream(30);
         if (dest.stream.getAudioTracks().length > 0) {

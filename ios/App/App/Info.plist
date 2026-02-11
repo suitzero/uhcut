@@ -47,5 +47,7 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app requires microphone access to record voiceovers.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>

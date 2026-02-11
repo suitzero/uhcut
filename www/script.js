@@ -701,8 +701,14 @@ function processThumbQueue() {
     if (!thumbVideo) {
         thumbVideo = document.createElement('video');
         thumbVideo.muted = true;
+        thumbVideo.playsInline = true;
         thumbVideo.preload = 'auto';
-        thumbVideo.style.display = 'none';
+        // thumbVideo.crossOrigin = 'anonymous';
+        thumbVideo.style.position = 'absolute';
+        thumbVideo.style.top = '-9999px';
+        thumbVideo.style.width = '1px';
+        thumbVideo.style.height = '1px';
+        thumbVideo.style.pointerEvents = 'none';
         document.body.appendChild(thumbVideo);
     }
 

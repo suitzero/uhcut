@@ -150,7 +150,14 @@ function handleFiles(e) {
 
 function processFile(file, startTime = null) {
     const url = URL.createObjectURL(file);
-    const type = file.type.startsWith('video') ? 'video' : 'audio';
+    // Handle m4a which might be audio/mp4 or just file extension
+    let type = 'audio';
+    if (file.type.startsWith('video')) {
+        type = 'video';
+    } else if (file.name.toLowerCase().endsWith('.m4a') || file.type.startsWith('audio')) {
+        type = 'audio';
+    }
+
     const id = Date.now() + Math.random().toString(36).substr(2, 9);
 
     const element = document.createElement(type === 'video' ? 'video' : 'audio');
@@ -694,8 +701,14 @@ function processThumbQueue() {
     if (!thumbVideo) {
         thumbVideo = document.createElement('video');
         thumbVideo.muted = true;
+        thumbVideo.playsInline = true;
         thumbVideo.preload = 'auto';
-        thumbVideo.style.display = 'none';
+        // thumbVideo.crossOrigin = 'anonymous';
+        thumbVideo.style.position = 'absolute';
+        thumbVideo.style.top = '-9999px';
+        thumbVideo.style.width = '1px';
+        thumbVideo.style.height = '1px';
+        thumbVideo.style.pointerEvents = 'none';
         document.body.appendChild(thumbVideo);
     }
 

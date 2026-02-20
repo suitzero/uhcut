@@ -7,7 +7,7 @@
     --track-bg: #333;
     --clip-video: #4a90e2;
     --clip-audio: #50e3c2;
-    --timeline-height: 160px;
+    --timeline-height: 210px;
 }
 
 * {
@@ -130,7 +130,7 @@ button:hover {
 }
 
 .timeline-container {
-    height: var(--timeline-height);
+    height: calc(var(--timeline-height) + env(safe-area-inset-bottom));
     background: #111;
     position: relative;
     overflow-x: scroll;
@@ -139,6 +139,7 @@ button:hover {
     flex-direction: column;
     padding-left: 20px; /* Safe start padding */
     padding-right: 20px;
+    padding-bottom: env(safe-area-inset-bottom);
 }
 
 .timeline-header {

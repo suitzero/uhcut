@@ -695,6 +695,8 @@ function processThumbQueue() {
     // During playback, skip video seek operations (serve cached only)
     if (state.isPlaying) {
         isProcessingThumbs = false;
+        // Retry later
+        setTimeout(processThumbQueue, 500);
         return;
     }
 
@@ -704,42 +706,75 @@ function processThumbQueue() {
         thumbVideo.playsInline = true;
         thumbVideo.preload = 'auto';
         // thumbVideo.crossOrigin = 'anonymous';
-        thumbVideo.style.position = 'absolute';
-        thumbVideo.style.top = '-9999px';
+        thumbVideo.style.position = 'fixed';
+        thumbVideo.style.top = '0';
+        thumbVideo.style.left = '0';
         thumbVideo.style.width = '1px';
         thumbVideo.style.height = '1px';
+        thumbVideo.style.opacity = '0.01';
+        thumbVideo.style.zIndex = '-9999';
         thumbVideo.style.pointerEvents = 'none';
         document.body.appendChild(thumbVideo);
     }
 
-    const onSeek = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 160;
-        canvas.height = 90;
-        canvas.getContext('2d').drawImage(thumbVideo, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL();
-        task.el.style.backgroundImage = `url(${dataUrl})`;
-        if (task.cacheKey) thumbCache[task.cacheKey] = dataUrl;
+    const next = () => {
+        // Clear listeners to avoid memory leaks or duplicate calls
+        thumbVideo.onseeked = null;
+        thumbVideo.onerror = null;
+        thumbVideo.onloadeddata = null;
 
         isProcessingThumbs = false;
         setTimeout(processThumbQueue, 20);
+    };
+
+    const onSeek = () => {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 160;
+            canvas.height = 90;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(thumbVideo, 0, 0, canvas.width, canvas.height);
+            const dataUrl = canvas.toDataURL();
+            task.el.style.backgroundImage = `url(${dataUrl})`;
+            if (task.cacheKey) thumbCache[task.cacheKey] = dataUrl;
+        } catch(e) { console.warn('Thumb draw error', e); }
+        next();
     };
 
     const onError = () => {
-        isProcessingThumbs = false;
-        setTimeout(processThumbQueue, 20);
+        console.warn('Thumb load error');
+        next();
     };
 
-    thumbVideo.addEventListener('seeked', onSeek, { once: true });
-    thumbVideo.addEventListener('error', onError, { once: true });
+    // Use property handlers to easily clear/overwrite
+    thumbVideo.onseeked = onSeek;
+    thumbVideo.onerror = onError;
 
-    if (thumbVideo.src !== task.url) thumbVideo.src = task.url;
+    const performSeek = () => {
+        try {
+            thumbVideo.currentTime = task.time;
+        } catch(e) { onError(); }
+    };
 
-    if (thumbVideo.readyState >= 2 && thumbVideo.src === task.url && Math.abs(thumbVideo.currentTime - task.time) < 0.1) {
-         onSeek();
+    if (thumbVideo.src !== task.url) {
+        thumbVideo.src = task.url;
+        thumbVideo.load();
+        thumbVideo.onloadeddata = performSeek;
     } else {
-         thumbVideo.currentTime = task.time;
+        if (thumbVideo.readyState >= 2) {
+            performSeek();
+        } else {
+            thumbVideo.onloadeddata = performSeek;
+        }
     }
+
+    // Safety timeout
+    setTimeout(() => {
+        if (isProcessingThumbs) {
+             console.warn('Thumb timeout');
+             next();
+        }
+    }, 3000);
 }
 
 function renderRuler(duration) {
@@ -915,8 +950,8 @@ function setupToolbar() {
     btn('play-pause-btn', () => {
         state.isPlaying = !state.isPlaying;
 
-        const playIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
-        const pauseIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+        const playIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M8 5v14l11-7z"/></svg>';
+        const pauseIcon = '<svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
         elements.playPauseBtn.innerHTML = state.isPlaying ? pauseIcon : playIcon;
 
         if (!state.isPlaying) {
@@ -1445,8 +1480,8 @@ function setupExport() {
             if (firstMedia && firstMedia.videoWidth && firstMedia.videoHeight) {
                 exportWidth = firstMedia.videoWidth;
                 exportHeight = firstMedia.videoHeight;
-                // Cap at 1920 on the longer side
-                const maxDim = 1920;
+                // Cap at 1280 (720p) to ensure smooth playback/export on mobile
+                const maxDim = 1280;
                 if (exportWidth > maxDim || exportHeight > maxDim) {
                     const scale = maxDim / Math.max(exportWidth, exportHeight);
                     exportWidth = Math.round(exportWidth * scale);
@@ -1480,7 +1515,13 @@ function setupExport() {
             if (MediaRecorder.isTypeSupported(t)) { selectedType = t; break; }
         }
 
-        const recorder = new MediaRecorder(stream, selectedType ? { mimeType: selectedType } : undefined);
+        const options = {
+            videoBitsPerSecond: 3000000, // 3 Mbps
+            audioBitsPerSecond: 128000
+        };
+        if (selectedType) options.mimeType = selectedType;
+
+        const recorder = new MediaRecorder(stream, options);
         const chunks = [];
         recorder.ondataavailable = e => chunks.push(e.data);
 

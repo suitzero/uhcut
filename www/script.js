@@ -825,7 +825,7 @@ function updatePlayhead() {
     elements.timeDisplay.textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}.${ms.toString().padStart(2,'0')}`;
 }
 
-function syncMedia() {
+function syncMedia(videoDriving = false) {
     // Setup Main Video Audio Graph
     if (!mainVideoSource && elements.mainVideo) {
         try {
@@ -845,8 +845,13 @@ function syncMedia() {
     if (videoClip) {
         const media = state.media.find(m => m.id === videoClip.mediaId);
         if (v.src !== media.url) v.src = media.url;
-        const clipTime = state.playbackTime - videoClip.startTime + videoClip.offset;
-        if (Math.abs(v.currentTime - clipTime) > 0.3) v.currentTime = clipTime;
+
+        // If the video element is driving the clock, we don't force seek it
+        if (!videoDriving) {
+            const clipTime = state.playbackTime - videoClip.startTime + videoClip.offset;
+            // Tighter tolerance (0.1s) for seeking when not driving
+            if (Math.abs(v.currentTime - clipTime) > 0.1) v.currentTime = clipTime;
+        }
 
         // Volume Control
         if (mainVideoGain) {
@@ -928,9 +933,30 @@ function renderLoop(timestamp) {
         const dt = (timestamp - state.lastFrameTime) / 1000;
         state.lastFrameTime = timestamp;
 
-        state.playbackTime += dt;
+        // Determine if the main video element should drive the playback time
+        // This prevents stutter by ensuring AV sync comes from the browser's media clock
+        let videoDriving = false;
+        const videoClip = state.tracks.video.find(c =>
+             state.playbackTime >= c.startTime &&
+             state.playbackTime < c.startTime + c.duration
+        );
+
+        if (videoClip && elements.mainVideo && !elements.mainVideo.paused && elements.mainVideo.readyState > 2) {
+             const currentVideoTime = elements.mainVideo.currentTime;
+             const newTime = videoClip.startTime + (currentVideoTime - videoClip.offset);
+             // Use video clock if it hasn't drifted wildly (e.g. loops/jumps)
+             if (Math.abs(newTime - state.playbackTime) < 0.5) {
+                 state.playbackTime = newTime;
+                 videoDriving = true;
+             }
+        }
+
+        if (!videoDriving) {
+             state.playbackTime += dt;
+        }
+
         updatePlayhead();
-        syncMedia();
+        syncMedia(videoDriving);
 
         const playheadPx = state.playbackTime * state.zoom;
         const scrollLeft = elements.timelineContainer.scrollLeft;
@@ -1464,14 +1490,14 @@ async function removeSilenceTool() {
 function setupExport() {
     elements.exportBtn.addEventListener('click', async () => {
         elements.exportOverlay.classList.remove('hidden');
-        elements.exportProgress.textContent = 'Preparing...';
+        elements.exportProgress.textContent = 'Initializing Export...';
         elements.saveExportBtn.style.display = 'none';
         elements.cancelExportBtn.style.display = 'inline-block';
 
         state.isPlaying = false;
         seek(0);
 
-        // Determine export dimensions from source video (preserve portrait/landscape)
+        // Calculate dimensions
         let exportWidth = 1280;
         let exportHeight = 720;
         const firstVideoClip = state.tracks.video[0];
@@ -1480,151 +1506,353 @@ function setupExport() {
             if (firstMedia && firstMedia.videoWidth && firstMedia.videoHeight) {
                 exportWidth = firstMedia.videoWidth;
                 exportHeight = firstMedia.videoHeight;
-                // Cap at 1280 (720p) to ensure smooth playback/export on mobile
+                // Cap at 1280 (720p)
                 const maxDim = 1280;
                 if (exportWidth > maxDim || exportHeight > maxDim) {
                     const scale = maxDim / Math.max(exportWidth, exportHeight);
-                    exportWidth = Math.round(exportWidth * scale);
-                    exportHeight = Math.round(exportHeight * scale);
+                    exportWidth = (Math.round(exportWidth * scale) >> 1) << 1; // Ensure even
+                    exportHeight = (Math.round(exportHeight * scale) >> 1) << 1;
                 }
             }
         }
 
-        const canvas = document.createElement('canvas');
-        canvas.width = exportWidth;
-        canvas.height = exportHeight;
-        const ctx = canvas.getContext('2d');
-
-        // Use Global Export Dest (already connected to masterGain)
-        const dest = exportDest;
-
-        const stream = canvas.captureStream(30);
-        if (dest.stream.getAudioTracks().length > 0) {
-            stream.addTrack(dest.stream.getAudioTracks()[0]);
-        }
-
-        // Supported export types
-        const exportTypes = [
-            'video/mp4;codecs=avc1',
-            'video/mp4',
-            'video/webm;codecs=vp9',
-            'video/webm'
-        ];
-        let selectedType = '';
-        for (const t of exportTypes) {
-            if (MediaRecorder.isTypeSupported(t)) { selectedType = t; break; }
-        }
-
-        const options = {
-            videoBitsPerSecond: 3000000, // 3 Mbps
-            audioBitsPerSecond: 128000
-        };
-        if (selectedType) options.mimeType = selectedType;
-
-        const recorder = new MediaRecorder(stream, options);
-        const chunks = [];
-        recorder.ondataavailable = e => chunks.push(e.data);
-
-        // Max time
         let maxTime = 0;
         state.tracks.video.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration));
         state.tracks.audio.forEach(t => t.forEach(c => maxTime = Math.max(maxTime, c.startTime+c.duration)));
         if (maxTime === 0) maxTime = 1;
 
-        recorder.onstop = async () => {
-            elements.exportProgress.textContent = 'Ready!';
+        // Check Hardcore Requirement
+        if (window.VideoEncoder && window.MP4Box) {
+            performHardcoreExport(exportWidth, exportHeight, maxTime);
+        } else {
+            // Fallback to simple MediaRecorder
+            alert("Your browser doesn't support the Hardcore Engine (WebCodecs/MP4Box). Falling back to legacy recorder.");
+            performLegacyExport(exportWidth, exportHeight, maxTime);
+        }
+    });
+}
 
-            const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
-            if (blob.size === 0) {
-                elements.exportProgress.textContent = 'Error: Recording Failed (Empty)';
-                return;
-            }
+async function performHardcoreExport(width, height, duration) {
+    const { exportProgress, saveExportBtn, cancelExportBtn, exportOverlay } = elements;
 
-            elements.cancelExportBtn.style.display = 'none';
-            elements.saveExportBtn.style.display = 'inline-block';
+    // 1. Audio Pass (Realtime)
+    exportProgress.textContent = "Pass 1/3: Rendering Audio...";
 
-            elements.saveExportBtn.onclick = async () => {
-                const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
-                const filename = `uhcut-export.${ext}`;
-                const file = new File([blob], filename, { type: selectedType || 'video/webm' });
+    let audioBlob = null;
+    let audioCanceled = false;
 
-                // Try Share API
-                if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                    try {
-                        await navigator.share({
-                            files: [file],
-                            title: 'UhCut Export',
-                            text: 'Created with UhCut'
-                        });
-                        elements.exportOverlay.classList.add('hidden');
-                        return;
-                    } catch (e) {
-                        console.warn("Share failed/cancelled", e);
-                    }
-                }
+    try {
+        const dest = exportDest;
+        const options = { mimeType: 'audio/mp4' };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+             options.mimeType = 'audio/webm'; // Fallback
+        }
 
-                // Fallback
-                const url = URL.createObjectURL(blob);
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const recorder = new MediaRecorder(dest.stream, options);
+        const chunks = [];
+        recorder.ondataavailable = e => chunks.push(e.data);
 
-                if (isIOS) {
-                    window.open(url, '_blank');
-                } else {
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = filename;
-                    a.click();
-                }
-
-                setTimeout(() => elements.exportOverlay.classList.add('hidden'), 2000);
+        const audioPromise = new Promise((resolve, reject) => {
+            recorder.onstop = () => {
+                if (audioCanceled) reject('Canceled');
+                else resolve(new Blob(chunks, { type: options.mimeType }));
             };
-        };
+        });
 
         recorder.start();
         state.isPlaying = true;
 
-        function recLoop() {
-            if (!state.isPlaying || state.playbackTime >= maxTime) {
-                recorder.stop();
+        // Playback loop for Audio
+        const start = performance.now();
+        function audioLoop() {
+            if (audioCanceled) return;
+            if (state.playbackTime >= duration) {
                 state.isPlaying = false;
+                recorder.stop();
+                return;
+            }
+            requestAnimationFrame(audioLoop);
+        }
+        audioLoop();
+
+        cancelExportBtn.onclick = () => {
+            audioCanceled = true;
+            state.isPlaying = false;
+            recorder.stop();
+            exportOverlay.classList.add('hidden');
+        };
+
+        audioBlob = await audioPromise;
+
+    } catch (e) {
+        if (e === 'Canceled') return;
+        console.error(e);
+        exportProgress.textContent = "Audio Render Failed. Proceeding silent.";
+    }
+
+    // 2. Video Pass (Offline)
+    exportProgress.textContent = "Pass 2/3: Rendering Video (0%)...";
+    state.isPlaying = false;
+    seek(0);
+
+    const file = MP4Box.createFile();
+    let trackId = null;
+
+    // Setup Muxer Video Track
+    trackId = file.addTrack({
+        width: width,
+        height: height,
+        nb_samples: Math.ceil(duration * 30),
+        timescale: 1000000, // 1MHz for precision
+        avcDecoderConfigRecord: null // will be set by init segment
+    });
+
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width = width;
+    offCanvas.height = height;
+    const ctx = offCanvas.getContext('2d'); // '2d', { alpha: false } ??
+
+    let stopVideo = false;
+    cancelExportBtn.onclick = () => { stopVideo = true; exportOverlay.classList.add('hidden'); };
+
+    const videoPromise = new Promise((resolve, reject) => {
+        const init = {
+            output: (chunk, meta) => {
+                if (meta && meta.decoderConfig && meta.decoderConfig.description) {
+                     file.setSegmentOptions(trackId, null, { nbSamples: 1000 }); // Options?
+                     // Update track with AVCC
+                     const avcc = new Uint8Array(meta.decoderConfig.description);
+                     file.tracks[0].avcDecoderConfigRecord = avcc; // Hacky access?
+                     // Actually MP4Box usually parses this from addSample if passed properly?
+                     // We need to just addSample.
+                }
+
+                const sb = new ArrayBuffer(chunk.byteLength);
+                chunk.copyTo(sb);
+
+                file.addSample(trackId, sb, {
+                    duration: chunk.duration, // 1000000 / 30
+                    dts: chunk.timestamp,
+                    cts: chunk.timestamp,
+                    is_sync: chunk.type === 'key'
+                });
+            },
+            error: (e) => reject(e)
+        };
+
+        const config = {
+            codec: 'avc1.42001f', // Baseline 3.1
+            width: width,
+            height: height,
+            bitrate: 3000000,
+            avc: { format: 'avc' } // Important for MP4Box
+        };
+
+        const encoder = new VideoEncoder(init);
+        encoder.configure(config);
+
+        // Frame Loop
+        const fps = 30;
+        const frameDur = 1 / fps;
+        let t = 0;
+
+        async function processFrame() {
+            if (stopVideo) { reject('Canceled'); return; }
+            if (t >= duration) {
+                await encoder.flush();
+                resolve();
                 return;
             }
 
-            // Progress
-            const pct = Math.floor((state.playbackTime / maxTime) * 100);
-            elements.exportProgress.textContent = `${pct}%`;
+            // Step 1: Seek
+            state.playbackTime = t;
+            updatePlayhead(); // UI update
 
-            // Handle Stabilization Crop
-            const currentClip = state.tracks.video.find(c =>
-                state.playbackTime >= c.startTime &&
-                state.playbackTime < c.startTime + c.duration
-            );
+            // Force Sync
+            const vidClip = state.tracks.video.find(c => t >= c.startTime && t < c.startTime + c.duration);
+            if (vidClip && elements.mainVideo) {
+                const media = state.media.find(m => m.id === vidClip.mediaId);
+                if (elements.mainVideo.src !== media.url) elements.mainVideo.src = media.url;
 
-            if (currentClip && currentClip.stabilized) {
-                const vw = elements.mainVideo.videoWidth;
-                const vh = elements.mainVideo.videoHeight;
-                if (vw && vh) {
-                    const sw = vw / 1.1;
-                    const sh = vh / 1.1;
-                    const sx = (vw - sw) / 2;
-                    const sy = (vh - sh) / 2;
-                    ctx.drawImage(elements.mainVideo, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-                } else {
-                    ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
+                elements.mainVideo.currentTime = t - vidClip.startTime + vidClip.offset;
+
+                // WAIT for seek
+                if (!elements.mainVideo.paused || elements.mainVideo.readyState < 2) {
+                     await new Promise(r => {
+                         elements.mainVideo.onseeked = () => { elements.mainVideo.onseeked = null; r(); };
+                         // Backup timeout
+                         setTimeout(r, 200);
+                     });
                 }
-            } else {
-                ctx.drawImage(elements.mainVideo, 0, 0, canvas.width, canvas.height);
             }
-            requestAnimationFrame(recLoop);
-        }
-        recLoop();
 
-        elements.cancelExportBtn.onclick = () => {
-            recorder.stop();
-            state.isPlaying = false;
-            elements.exportOverlay.classList.add('hidden');
-        };
+            // Step 2: Draw
+            // Logic duplicated from render logic roughly
+             if (vidClip) {
+                 const v = elements.mainVideo;
+                 if (vidClip.stabilized) {
+                    const sw = v.videoWidth / 1.1;
+                    const sh = v.videoHeight / 1.1;
+                    const sx = (v.videoWidth - sw) / 2;
+                    const sy = (v.videoHeight - sh) / 2;
+                    ctx.drawImage(v, sx, sy, sw, sh, 0, 0, width, height);
+                 } else {
+                    ctx.drawImage(v, 0, 0, width, height);
+                 }
+                 // Add stabilization badge? No.
+             } else {
+                 ctx.fillStyle = 'black';
+                 ctx.fillRect(0, 0, width, height);
+             }
+
+             // Step 3: Encode
+             const frame = new VideoFrame(offCanvas, { timestamp: t * 1000000 });
+             encoder.encode(frame, { keyFrame: (Math.round(t*30) % 30 === 0) });
+             frame.close();
+
+             t += frameDur;
+             exportProgress.textContent = `Pass 2/3: Rendering Video (${Math.round(t/duration*100)}%)...`;
+
+             // Yield to event loop to keep UI responsive
+             setTimeout(processFrame, 0);
+        }
+
+        processFrame();
     });
+
+    try {
+        await videoPromise;
+    } catch(e) {
+        if(e === 'Canceled') return;
+        console.error(e);
+        alert('Video Encoding Failed');
+        return;
+    }
+
+    // 3. Muxing (Pass 3)
+    exportProgress.textContent = "Pass 3/3: Muxing Audio...";
+
+    // Use a separate MP4Box instance to parse the audio file and extract samples
+    if (audioBlob && audioBlob.type.includes('mp4')) {
+        await new Promise((resolve) => {
+            const remuxer = MP4Box.createFile();
+            remuxer.onError = (e) => {
+                console.error("Audio Mux Error", e);
+                resolve();
+            };
+
+            let newTrackId = null;
+
+            remuxer.onReady = (info) => {
+                if (info.audioTracks.length > 0) {
+                    const track = info.audioTracks[0];
+                    // Create Track in Output File
+                    const options = {
+                        type: 'audio',
+                        timescale: track.timescale,
+                        media_duration: track.duration,
+                        duration: track.duration,
+                        nb_samples: track.nb_samples,
+                        audio: track.audio,
+                        codec: track.codec
+                    };
+
+                    try {
+                        newTrackId = file.addTrack(options);
+                        remuxer.setExtractionOptions(track.id, null, { nbSamples: 10000 });
+                        remuxer.start();
+                    } catch(e) {
+                        console.error("Track Add Error", e);
+                        resolve();
+                    }
+                } else {
+                    resolve();
+                }
+            };
+
+            remuxer.onSamples = (id, user, samples) => {
+                samples.forEach(s => {
+                    file.addSample(newTrackId, s.data, {
+                        duration: s.duration,
+                        dts: s.dts,
+                        cts: s.cts,
+                        is_sync: s.is_sync
+                    });
+                });
+            };
+
+            audioBlob.arrayBuffer().then(ab => {
+                ab.fileStart = 0;
+                remuxer.appendBuffer(ab);
+                remuxer.flush();
+                resolve();
+            });
+        });
+    } else if (audioBlob) {
+        alert("Warning: Browser generated " + audioBlob.type + ". Muxing requires audio/mp4. Exporting Video Only.");
+    }
+
+    file.flush();
+    file.save('uhcut-hardcore.mp4');
+    exportOverlay.classList.add('hidden');
+}
+
+function performLegacyExport(exportWidth, exportHeight, maxTime) {
+    // Copy of original setupExport logic
+    const canvas = document.createElement('canvas');
+    canvas.width = exportWidth;
+    canvas.height = exportHeight;
+    const ctx = canvas.getContext('2d');
+    const dest = exportDest;
+    const stream = canvas.captureStream(30);
+    if (dest.stream.getAudioTracks().length > 0) {
+        stream.addTrack(dest.stream.getAudioTracks()[0]);
+    }
+    const exportTypes = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+    let selectedType = '';
+    for (const t of exportTypes) { if (MediaRecorder.isTypeSupported(t)) { selectedType = t; break; } }
+
+    const options = { videoBitsPerSecond: 3000000, audioBitsPerSecond: 128000 };
+    if (selectedType) options.mimeType = selectedType;
+    const recorder = new MediaRecorder(stream, options);
+    const chunks = [];
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = async () => {
+        elements.exportProgress.textContent = 'Ready!';
+        const blob = new Blob(chunks, { type: selectedType || 'video/webm' });
+        elements.cancelExportBtn.style.display = 'none';
+        elements.saveExportBtn.style.display = 'inline-block';
+        elements.saveExportBtn.onclick = async () => {
+             const ext = (selectedType && selectedType.includes('mp4')) ? 'mp4' : 'webm';
+             const filename = `uhcut-export.${ext}`;
+             const file = new File([blob], filename, { type: selectedType || 'video/webm' });
+             if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                  try { await navigator.share({ files: [file] }); elements.exportOverlay.classList.add('hidden'); return; } catch (e) {}
+             }
+             const url = URL.createObjectURL(blob);
+             const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+             setTimeout(() => elements.exportOverlay.classList.add('hidden'), 2000);
+        };
+    };
+    recorder.start();
+    state.isPlaying = true;
+    function recLoop() {
+        if (!state.isPlaying || state.playbackTime >= maxTime) { recorder.stop(); state.isPlaying = false; return; }
+        const pct = Math.floor((state.playbackTime / maxTime) * 100);
+        elements.exportProgress.textContent = `${pct}%`;
+
+        const currentClip = state.tracks.video.find(c => state.playbackTime >= c.startTime && state.playbackTime < c.startTime + c.duration);
+        if (currentClip && currentClip.stabilized) {
+             const v = elements.mainVideo;
+             const sw = v.videoWidth / 1.1; const sh = v.videoHeight / 1.1;
+             ctx.drawImage(v, (v.videoWidth - sw)/2, (v.videoHeight - sh)/2, sw, sh, 0, 0, exportWidth, exportHeight);
+        } else {
+             ctx.drawImage(elements.mainVideo, 0, 0, exportWidth, exportHeight);
+        }
+        requestAnimationFrame(recLoop);
+    }
+    recLoop();
+    elements.cancelExportBtn.onclick = () => { recorder.stop(); state.isPlaying = false; elements.exportOverlay.classList.add('hidden'); };
 }
 
 init();

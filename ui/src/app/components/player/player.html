@@ -1,0 +1,16 @@
+<div class="preview-area">
+    <div class="video-container">
+        <video #mainVideo playsinline></video>
+        <!-- Overlay canvas removed for now, can be added later -->
+    </div>
+    <div class="playback-controls">
+        <button (click)="togglePlay()" class="tool-btn">
+            @if (state.isPlaying()) {
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+            } @else {
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="white"><path d="M8 5v14l11-7z"/></svg>
+            }
+        </button>
+        <span id="time-display">{{ formattedTime() }}</span>
+    </div>
+</div>

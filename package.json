@@ -5,8 +5,9 @@
   "main": "index.js",
   "scripts": {
     "test": "node test/run.js",
-    "build:android": "npx cap sync android",
-    "build:ios": "npx cap sync ios"
+    "build:ui": "cd ui && npx ng build && cd .. && cp -r www/browser/* www/",
+    "build:android": "npm run build:ui && npx cap sync android",
+    "build:ios": "npm run build:ui && npx cap sync ios"
   },
   "repository": {
     "type": "git",

@@ -1,0 +1,44 @@
+<div class="timeline-container">
+    <div class="timeline-header">
+        <div class="time-ruler" [style.width.px]="totalWidth">
+            <!-- Ruler Ticks generated here via ngFor -->
+             <div *ngFor="let tick of rulerTicks" class="ruler-tick" [style.left.px]="tick.left">
+                 <span>{{ tick.label }}</span>
+             </div>
+        </div>
+    </div>
+    <div class="timeline-tracks" #timelineTracks [style.width.px]="totalWidth"
+         (dragover)="onDragOver($event)" (drop)="onDrop($event)"
+         (click)="onTimelineClick($event)">
+
+        <!-- Video Track -->
+        <div class="track" data-type="video">
+            <div *ngFor="let clip of videoTrack()"
+                 class="clip"
+                 [class.selected]="selectedClipId() === clip.id"
+                 [style.left.px]="clip.startTime * zoom()"
+                 [style.width.px]="clip.duration * zoom()"
+                 (click)="onClipClick($event, clip)"
+                 (mousedown)="onMouseDown($event, clip)">
+                <span class="clip-label">{{ getMediaName(clip) }}</span>
+                <!-- Thumbnail Logic -->
+            </div>
+        </div>
+
+        <!-- Audio Tracks -->
+        <div *ngFor="let track of audioTracks(); let i = index" class="track" data-type="audio">
+             <div *ngFor="let clip of track"
+                  class="clip audio-clip"
+                  [class.selected]="selectedClipId() === clip.id"
+                  [style.left.px]="clip.startTime * zoom()"
+                  [style.width.px]="clip.duration * zoom()"
+                  (click)="onClipClick($event, clip)"
+                  (mousedown)="onMouseDown($event, clip)">
+                 <span class="clip-label">{{ getMediaName(clip) }}</span>
+                 <!-- Waveform Logic -->
+             </div>
+        </div>
+
+    </div>
+    <div class="playhead" [style.left.px]="playbackTime() * zoom()"></div>
+</div>

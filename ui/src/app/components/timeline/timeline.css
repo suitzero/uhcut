@@ -1,0 +1,133 @@
+:host {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.timeline-container {
+    flex: 1;
+    background: #111;
+    position: relative;
+    overflow-x: auto;
+    overflow-y: hidden;
+    display: flex;
+    flex-direction: column;
+    padding-left: 20px;
+    padding-right: 20px;
+}
+
+.timeline-header {
+    height: 30px;
+    background: #222;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    border-bottom: 1px solid #333;
+    pointer-events: none;
+}
+
+.time-ruler {
+    height: 100%;
+    position: relative;
+    pointer-events: none;
+}
+
+.ruler-tick {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 1px;
+    background: #555;
+    pointer-events: none;
+}
+
+.ruler-tick span {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    font-size: 10px;
+    color: #888;
+}
+
+.timeline-tracks {
+    flex: 1;
+    position: relative;
+    padding-top: 10px;
+}
+
+.track {
+    height: 60px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.track[data-type="audio"] {
+    height: 50px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.clip {
+    position: absolute;
+    height: 100%;
+    background: #4a90e2;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.2);
+    cursor: pointer;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    padding-left: 6px;
+    font-size: 11px;
+    color: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.clip.audio-clip {
+    background: #50e3c2;
+    color: #111;
+}
+
+.clip.selected {
+    border: 2px solid #fff;
+    z-index: 5;
+    box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
+}
+
+.clip-label {
+    z-index: 2;
+    pointer-events: none;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    max-width: 100%;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    font-weight: 500;
+}
+
+.playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #ff4444;
+    z-index: 20;
+    pointer-events: none;
+    margin-left: 20px;
+    transform: translateX(-1px);
+}
+
+.playhead::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -6px;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid #ff4444;
+}

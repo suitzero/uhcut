@@ -1,0 +1,64 @@
+/* Global Styles */
+:root {
+    --bg-color: #1e1e2f;
+    --panel-bg: #252535;
+    --accent-color: #00d2ff;
+    --text-color: #ffffff;
+    --border-color: #333;
+    --track-bg: #333;
+    --clip-video: #4a90e2;
+    --clip-audio: #50e3c2;
+    --timeline-height: 250px; /* Adjusted */
+}
+
+* {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+body, html {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100vh;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #111;
+}
+::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 3px;
+}
+
+button {
+    background: #444;
+    border: none;
+    color: white;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+button:active {
+    background: #666;
+}
+
+/* Component Placeholders (to be moved to component css eventually) */
+.separator {
+    width: 1px;
+    height: 24px;
+    background: #555;
+    margin: 0 8px;
+    flex-shrink: 0;
+}

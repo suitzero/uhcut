@@ -1,0 +1,67 @@
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+.top-bar {
+    height: calc(50px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+    background: var(--panel-bg);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 15px;
+    padding-right: 15px;
+    border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
+}
+
+.top-bar .logo {
+    font-size: 1.2rem;
+    font-weight: bold;
+    color: var(--accent-color);
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+}
+
+.actions button {
+    padding: 6px 16px;
+    background: var(--accent-color);
+    color: #111;
+    font-weight: 600;
+    border-radius: 20px;
+}
+
+.actions button:active {
+    background: #00b3e6;
+}
+
+.workspace {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: #000;
+    overflow: hidden;
+}
+
+app-player {
+    flex: 1;
+    display: flex;
+    min-height: 0; /* important for flex items to not overflow */
+}
+
+app-toolbar {
+    flex-shrink: 0;
+}
+
+app-timeline {
+    height: var(--timeline-height, 250px);
+    flex-shrink: 0;
+    display: flex;
+}

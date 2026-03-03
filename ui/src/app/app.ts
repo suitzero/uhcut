@@ -12,4 +12,9 @@ import { Timeline } from './components/timeline/timeline';
 })
 export class App {
   protected readonly title = signal('UhCut');
+
+  exportVideo() {
+    console.log("Export functionality placeholder");
+    // TODO: Connect to ExportService
+  }
 }

@@ -6,7 +6,7 @@ def run():
         page = browser.new_page()
         try:
             # Navigate to the served Angular app
-            page.goto("http://localhost:8080")
+            page.goto("http://localhost:4200/")
 
             # Wait for the app-root to be present
             page.wait_for_selector("app-root")

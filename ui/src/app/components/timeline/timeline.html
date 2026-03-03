@@ -22,6 +22,7 @@
                  (mousedown)="onMouseDown($event, clip)">
                 <span class="clip-label">{{ getMediaName(clip) }}</span>
                 <!-- Thumbnail Logic -->
+                <div class="clip-thumbnails" [innerHTML]="thumbnails[clip.id] || ''"></div>
             </div>
         </div>
 

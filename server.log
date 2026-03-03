@@ -1,5 +1,33 @@
-127.0.0.1 - - [27/Feb/2026 09:39:45] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [27/Feb/2026 09:41:30] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [27/Feb/2026 09:41:30] "GET /lib/mp4box.all.min.js HTTP/1.1" 200 -
-127.0.0.1 - - [27/Feb/2026 09:41:30] "GET /main-KMWGFLHL.js HTTP/1.1" 200 -
-127.0.0.1 - - [27/Feb/2026 09:41:30] "GET /styles-GJU26VJO.css HTTP/1.1" 200 -
+
+> uhcut-ui@0.0.0 start
+> ng serve
+
+❯ Building...
+✔ Building...
+Initial chunk files | Names         | Raw size
+main.js             | main          | 68.69 kB |
+styles.css          | styles        |  1.16 kB |
+
+                    | Initial total | 69.85 kB
+
+Application bundle generation complete. [2.650 seconds] - 2026-03-03T00:45:26.007Z
+
+Watch mode enabled. Watching for file changes...
+NOTE: Raw file sizes do not reflect development server per-request transformations.
+  ➜  Local:   http://localhost:4200/
+❯ Changes detected. Rebuilding...
+✔ Changes detected. Rebuilding...
+Initial chunk files | Names | Raw size
+main.js             | main  | 68.73 kB |
+
+Application bundle generation complete. [0.675 seconds] - 2026-03-03T00:47:05.366Z
+
+Component update sent to client(s).
+❯ Changes detected. Rebuilding...
+✔ Changes detected. Rebuilding...
+Initial chunk files | Names | Raw size
+main.js             | main  | 68.73 kB |
+
+Application bundle generation complete. [0.399 seconds] - 2026-03-03T00:47:12.600Z
+
+Component update sent to client(s).

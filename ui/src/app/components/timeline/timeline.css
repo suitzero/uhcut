@@ -9,7 +9,7 @@
     background: #111;
     position: relative;
     overflow-x: auto;
-    overflow-y: hidden;
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     padding-left: 20px;
@@ -53,6 +53,8 @@
     flex: 1;
     position: relative;
     padding-top: 10px;
+    height: 100%;
+    overflow-y: auto;
 }
 
 .track {
@@ -108,6 +110,26 @@
     max-width: 100%;
     text-shadow: 0 1px 2px rgba(0,0,0,0.5);
     font-weight: 500;
+}
+
+.clip-thumbnails {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.8;
+}
+
+.clip-thumbnails img {
+    height: 100%;
+    width: auto;
+    object-fit: cover;
+    pointer-events: none;
 }
 
 .playhead {

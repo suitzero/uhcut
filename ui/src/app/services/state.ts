@@ -186,6 +186,50 @@ export class StateService {
       }
   }
 
+  moveAudioClipToTrack(clipId: string, targetTrackIndex: number, newStartTime: number) {
+      const aTracks = this.audioTracks();
+      let clipToMove: Clip | null = null;
+      let originalTrackIndex = -1;
+
+      // Find the clip and its current track
+      for (let i = 0; i < aTracks.length; i++) {
+          const idx = aTracks[i].findIndex(c => c.id === clipId);
+          if (idx !== -1) {
+              clipToMove = { ...aTracks[i][idx], startTime: newStartTime };
+              originalTrackIndex = i;
+              break;
+          }
+      }
+
+      if (!clipToMove) return;
+
+      // Ensure target track exists
+      const targetIndex = Math.max(0, Math.min(aTracks.length - 1, targetTrackIndex));
+      const newATracks = aTracks.map(t => [...t]); // Deep copy outer array
+
+      // Check collision on target track
+      const collision = this.checkCollision(newATracks[targetIndex], clipToMove);
+
+      // Remove from original
+      newATracks[originalTrackIndex] = newATracks[originalTrackIndex].filter(c => c.id !== clipId);
+
+      if (collision && targetIndex !== originalTrackIndex) {
+          // If collision, maybe just update time on original track instead? Or force move?
+          // Let's just keep it on original track but update time
+          const stillCollision = this.checkCollision(newATracks[originalTrackIndex], clipToMove);
+          if (stillCollision) {
+              // Revert to pure original time?
+              clipToMove.startTime = aTracks[originalTrackIndex].find(c => c.id === clipId)!.startTime;
+          }
+          newATracks[originalTrackIndex].push(clipToMove);
+      } else {
+          // Move or just update time on target track
+          newATracks[targetIndex].push(clipToMove);
+      }
+
+      this.audioTracks.set(newATracks);
+  }
+
   deleteClip(clipId: string) {
       this.saveState();
       this.videoTrack.update(t => t.filter(c => c.id !== clipId));

@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, inject } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject, computed } from '@angular/core';
 import { StateService } from '../../services/state';
 import { AudioService } from '../../services/audio';
 
@@ -84,4 +84,29 @@ export class Toolbar {
   zoomOut() { this.state.zoom.update(z => Math.max(1, z / 1.5)); }
 
   split() { this.state.splitClip(); }
+
+  selectedClipType = computed(() => {
+      const id = this.state.selectedClipId();
+      if (!id) return null;
+      const clip = this.state.findClip(id);
+      return clip ? clip.type : null;
+  });
+
+  isStabilized = computed(() => {
+      const id = this.state.selectedClipId();
+      if (!id) return false;
+      const clip = this.state.findClip(id);
+      return clip ? !!clip.stabilized : false;
+  });
+
+  toggleStabilize() {
+      const id = this.state.selectedClipId();
+      if (id) {
+          const clip = this.state.findClip(id);
+          if (clip && clip.type === 'video') {
+              this.state.saveState();
+              this.state.updateClip(id, { stabilized: !clip.stabilized });
+          }
+      }
+  }
 }

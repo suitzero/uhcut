@@ -14,7 +14,8 @@
     align-items: center;
     justify-content: center;
     position: relative;
-    padding: 10px;
+    padding: 10px 10px 0 10px;
+    min-height: 0;
 }
 
 .video-container {
@@ -47,11 +48,9 @@ video {
     gap: 20px;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
-    position: absolute;
-    bottom: 0;
-    left: 0;
+    background: #111;
     z-index: 10;
+    flex-shrink: 0;
 }
 
 .playback-controls button {

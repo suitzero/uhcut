@@ -1,33 +1,27 @@
+npm warn exec The following package was not found and will be installed: http-server@14.1.1
+npm warn deprecated whatwg-encoding@2.0.0: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+Starting up http-server, serving www
 
-> uhcut-ui@0.0.0 start
-> ng serve
+http-server version: 14.1.1
 
-❯ Building...
-✔ Building...
-Initial chunk files | Names         | Raw size
-main.js             | main          | 68.69 kB |
-styles.css          | styles        |  1.16 kB |
+http-server settings:
+CORS: disabled
+Cache: 3600 seconds
+Connection Timeout: 120 seconds
+Directory Listings: visible
+AutoIndex: visible
+Serve GZIP Files: false
+Serve Brotli Files: false
+Default File Extension: none
 
-                    | Initial total | 69.85 kB
+Available on:
+  http://127.0.0.1:8080
+  http://192.168.0.2:8080
+Hit CTRL-C to stop the server
 
-Application bundle generation complete. [2.650 seconds] - 2026-03-03T00:45:26.007Z
-
-Watch mode enabled. Watching for file changes...
-NOTE: Raw file sizes do not reflect development server per-request transformations.
-  ➜  Local:   http://localhost:4200/
-❯ Changes detected. Rebuilding...
-✔ Changes detected. Rebuilding...
-Initial chunk files | Names | Raw size
-main.js             | main  | 68.73 kB |
-
-Application bundle generation complete. [0.675 seconds] - 2026-03-03T00:47:05.366Z
-
-Component update sent to client(s).
-❯ Changes detected. Rebuilding...
-✔ Changes detected. Rebuilding...
-Initial chunk files | Names | Raw size
-main.js             | main  | 68.73 kB |
-
-Application bundle generation complete. [0.399 seconds] - 2026-03-03T00:47:12.600Z
-
-Component update sent to client(s).
+[2026-03-03T17:53:56.582Z]  "GET /" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/143.0.7499.4 Safari/537.36"
+(node:5228) [DEP0066] DeprecationWarning: OutgoingMessage.prototype._headers is deprecated
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[2026-03-03T17:53:56.669Z]  "GET /lib/mp4box.all.min.js" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/143.0.7499.4 Safari/537.36"
+[2026-03-03T17:53:56.670Z]  "GET /main-U3TGHZVF.js" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/143.0.7499.4 Safari/537.36"
+[2026-03-03T17:53:56.830Z]  "GET /styles-GJU26VJO.css" "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/143.0.7499.4 Safari/537.36"

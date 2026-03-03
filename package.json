@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node test/run.js",
-    "build:ui": "cd ui && npx ng build && cd .. && cp -r www/browser/* www/",
+    "build:ui": "cd ui && npm install && npx ng build",
     "build:android": "npm run build:ui && npx cap sync android",
     "build:ios": "npm run build:ui && npx cap sync ios"
   },

@@ -19,8 +19,13 @@ console.log('UhCut Basic Tests\n');
 // 1. Web assets exist
 console.log('[Web Assets]');
 assert(fs.existsSync(path.join(__dirname, '..', 'www', 'index.html')), 'index.html exists');
-assert(fs.existsSync(path.join(__dirname, '..', 'www', 'script.js')), 'script.js exists');
-assert(fs.existsSync(path.join(__dirname, '..', 'www', 'style.css')), 'style.css exists');
+
+const wwwFiles = fs.readdirSync(path.join(__dirname, '..', 'www'));
+const hasMainJs = wwwFiles.some(f => f.startsWith('main-') && f.endsWith('.js'));
+const hasStylesCss = wwwFiles.some(f => f.startsWith('styles-') && f.endsWith('.css'));
+
+assert(hasMainJs, 'main-*.js exists');
+assert(hasStylesCss, 'styles-*.css exists');
 assert(fs.existsSync(path.join(__dirname, '..', 'www', 'manifest.json')), 'manifest.json exists');
 
 // 2. Capacitor config
@@ -41,7 +46,7 @@ assert(pkg.dependencies['@capacitor/ios'], '@capacitor/ios is a dependency');
 console.log('\n[HTML Validation]');
 const html = fs.readFileSync(path.join(__dirname, '..', 'www', 'index.html'), 'utf8');
 assert(html.includes('<script'), 'index.html includes script tag');
-assert(html.includes('script.js'), 'index.html references script.js');
+assert(html.includes('main-'), 'index.html references main-*.js');
 
 // Results
 console.log(`\n--- Results: ${passed} passed, ${failed} failed ---`);

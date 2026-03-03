@@ -112,6 +112,11 @@
     font-weight: 500;
 }
 
+.clip-label .badge {
+    color: #ffb700;
+    margin-right: 4px;
+}
+
 .clip-thumbnails {
     position: absolute;
     top: 0;

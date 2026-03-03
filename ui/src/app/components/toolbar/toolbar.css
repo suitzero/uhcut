@@ -46,3 +46,7 @@
 .tool-btn span {
     pointer-events: none;
 }
+
+.tool-btn.active {
+    color: #ffb700;
+}

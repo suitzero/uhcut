@@ -20,7 +20,12 @@
                  [style.width.px]="clip.duration * zoom()"
                  (click)="onClipClick($event, clip)"
                  (mousedown)="onMouseDown($event, clip)">
-                <span class="clip-label">{{ getMediaName(clip) }}</span>
+                <span class="clip-label">
+                    @if (clip.stabilized) {
+                        <span class="badge" title="Stabilized">⚡</span>
+                    }
+                    {{ getMediaName(clip) }}
+                </span>
                 <!-- Thumbnail Logic -->
                 <div class="clip-thumbnails" [innerHTML]="thumbnails[clip.id] || ''"></div>
             </div>
@@ -37,6 +42,10 @@
                   (mousedown)="onMouseDown($event, clip)">
                  <span class="clip-label">{{ getMediaName(clip) }}</span>
                  <!-- Waveform Logic -->
+                 <div class="clip-thumbnails" *ngIf="waveforms[clip.id]"
+                      [style.background-image]="'url(' + waveforms[clip.id] + ')'"
+                      style="background-size: 100% 100%; opacity: 0.3;">
+                 </div>
              </div>
         </div>
 

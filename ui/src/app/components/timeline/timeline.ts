@@ -37,6 +37,7 @@ export class Timeline {
   dragClipId: string | null = null;
   dragStartX = 0;
   dragOriginalStart = 0;
+  dragOriginalTrackType = 'video';
 
   // Waveform Cache (local)
   waveforms: { [key: string]: string } = {}; // DataURL or similar? No, draw to canvas directly usually.
@@ -48,11 +49,34 @@ export class Timeline {
   constructor() {
       effect(() => {
           const vTrack = this.videoTrack();
-          // We can reactively generate thumbnails when clips are added
+          const aTracks = this.audioTracks();
+
           vTrack.forEach(clip => {
               if (!this.thumbnails[clip.id]) {
                   this.generateThumbnails(clip);
+              } else {
+                  // Re-check if duration or offset changed significantly (e.g., after split)
+                  // For now, simple cache invalidation could be complex,
+                  // but we'll re-generate if the expected number of thumbs differs
+                  const expectedThumbs = Math.max(1, Math.ceil(clip.duration / 5));
+                  const currentThumbsMatch = (this.thumbnails[clip.id] as any).toString().match(/<img/g);
+                  if (currentThumbsMatch && currentThumbsMatch.length !== expectedThumbs && !clip.id.includes('split')) {
+                      // Actually, if we just generate on missing it's mostly fine,
+                      // but when splitting, the new clip gets a new ID, so it will generate automatically.
+                      // The ORIGINAL clip keeps its ID but its duration changes.
+                      this.generateThumbnails(clip);
+                  }
               }
+          });
+
+          aTracks.forEach(track => {
+              track.forEach(clip => {
+                  if (!this.waveforms[clip.id]) {
+                      this.generateWaveform(clip);
+                  } else {
+                      this.generateWaveform(clip); // Update waveform if clip changed
+                  }
+              });
           });
       });
   }
@@ -66,21 +90,23 @@ export class Timeline {
       video.muted = true;
       video.playsInline = true;
 
-      // Need it to be somewhat visible or in DOM for iOS sometimes, but let's try just loading data
-      await new Promise<void>((resolve) => {
-          video.onloadeddata = () => resolve();
-          video.onerror = () => resolve(); // Handle error gracefully
-      });
-
-      if (!video.videoWidth) return;
-
-      // Based on memory: Video thumbnails are generated asynchronously using a transparent, fixed-position video element (`opacity: 0.01`) instead of off-screen positioning (`top: -9999px`) to ensure WebKit renders frames on iOS.
+      // Based on memory: Append to DOM BEFORE loading to ensure WebKit renders frames on iOS.
       video.style.position = 'fixed';
       video.style.top = '0';
       video.style.left = '0';
       video.style.opacity = '0.01';
       video.style.pointerEvents = 'none';
       document.body.appendChild(video);
+
+      await new Promise<void>((resolve) => {
+          video.onloadeddata = () => resolve();
+          video.onerror = () => resolve();
+      });
+
+      if (!video.videoWidth) {
+          document.body.removeChild(video);
+          return;
+      }
 
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -89,7 +115,7 @@ export class Timeline {
           return;
       }
 
-      const trackHeight = 60; // Approximate height of track
+      const trackHeight = 60;
       const aspect = video.videoWidth / video.videoHeight;
       const thumbWidth = trackHeight * aspect;
 
@@ -97,14 +123,13 @@ export class Timeline {
       canvas.height = trackHeight;
 
       let html = '';
-      const numThumbs = Math.max(1, Math.ceil(clip.duration / 5)); // One thumb every 5 seconds roughly
+      const numThumbs = Math.max(1, Math.ceil(clip.duration / 5));
       const interval = clip.duration / numThumbs;
 
       for (let i = 0; i < numThumbs; i++) {
           const time = clip.offset + (i * interval);
           video.currentTime = time;
           await new Promise<void>((resolve) => {
-              // Using requestVideoFrameCallback if available, otherwise 'seeked'
               if ('requestVideoFrameCallback' in video) {
                   (video as any).requestVideoFrameCallback(() => resolve());
               } else {
@@ -114,7 +139,6 @@ export class Timeline {
                   };
                   (video as HTMLVideoElement).addEventListener('seeked', onSeeked);
               }
-              // Fallback resolve if seeked doesn't fire
               setTimeout(() => resolve(), 500);
           });
 
@@ -127,11 +151,50 @@ export class Timeline {
       document.body.removeChild(video);
   }
 
+  async generateWaveform(clip: Clip) {
+      const media = this.stateService.getMedia(clip.mediaId);
+      if (!media || !media.url) return;
+
+      const buffer = await this.audioService.getWaveform(media.url, media.id);
+      if (!buffer) return;
+
+      const canvas = document.createElement('canvas');
+      const trackHeight = 50;
+      const width = Math.max(10, clip.duration * this.zoom()); // Draw for current duration/zoom
+
+      canvas.width = width;
+      canvas.height = trackHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const data = buffer.getChannelData(0);
+      const step = Math.ceil(buffer.sampleRate * clip.duration / width);
+      const offsetSamples = Math.floor(clip.offset * buffer.sampleRate);
+
+      ctx.fillStyle = '#111';
+      const amp = trackHeight / 2;
+
+      for (let i = 0; i < width; i++) {
+          let min = 1.0;
+          let max = -1.0;
+          const start = offsetSamples + (i * step);
+          for (let j = 0; j < step; j++) {
+              const datum = data[start + j];
+              if (datum < min) min = datum;
+              if (datum > max) max = datum;
+          }
+          ctx.fillRect(i, (1 + min) * amp, 1, Math.max(1, (max - min) * amp));
+      }
+
+      this.waveforms[clip.id] = canvas.toDataURL();
+  }
+
   onMouseDown(event: MouseEvent, clip: Clip) {
       this.isDragging = true;
       this.dragClipId = clip.id;
       this.dragStartX = event.clientX;
       this.dragOriginalStart = clip.startTime;
+      this.dragOriginalTrackType = clip.type;
       this.stateService.selectedClipId.set(clip.id);
       event.stopPropagation();
   }
@@ -144,12 +207,33 @@ export class Timeline {
       const deltaSec = deltaPx / this.zoom();
       let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
 
+      // We handle visual updates of time immediately via store
+      // Target track resolution is handled on mouseup for simplicity and performance
+      // but we update start time in real-time
       this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
   }
 
   @HostListener('window:mouseup', ['$event'])
   onMouseUp(event: MouseEvent) {
       if (this.isDragging) {
+          if (this.dragClipId && this.dragOriginalTrackType === 'audio') {
+              const rect = this.timelineTracks.nativeElement.getBoundingClientRect();
+              const y = event.clientY - rect.top + this.timelineTracks.nativeElement.scrollTop;
+
+              // Find track index based on Y coordinate
+              // Video track is first (60px + 8px margin = 68px approx)
+              // Then audio tracks (50px + 8px margin = 58px approx each)
+              let targetTrackIndex = 0;
+              if (y > 68 + 58) {
+                  targetTrackIndex = 1;
+              }
+
+              const clip = this.stateService.findClip(this.dragClipId);
+              if (clip) {
+                  this.stateService.moveAudioClipToTrack(this.dragClipId, targetTrackIndex, clip.startTime);
+              }
+          }
+
           this.isDragging = false;
           this.dragClipId = null;
           this.stateService.saveState();

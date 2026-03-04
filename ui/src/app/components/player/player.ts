@@ -118,7 +118,7 @@ export class Player implements AfterViewInit {
           }
           v.muted = false; // We control volume via GainNode
           v.style.opacity = '1';
-          v.style.transform = videoClip.stabilized ? 'scale(1.1)' : 'scale(1)';
+          v.style.transform = videoClip.stabilized ? 'scale(1.3)' : 'scale(1)';
 
           if (this.state.isPlaying() && v.paused) v.play().catch(()=>{});
           if (!this.state.isPlaying() && !v.paused) v.pause();

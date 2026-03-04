@@ -161,34 +161,138 @@ export class Toolbar {
       }
   }
 
-  removeSilence() {
+  async removeSilence() {
       const id = this.state.selectedClipId();
-      if (id) {
-          const clip = this.state.findClip(id);
-          if (clip) {
-              // Simplified silence removal: splits clip into three chunks and removes middle
-              // (Full silence removal requires heavy audio buffer processing, this is a placeholder/simplified version)
-              this.state.saveState();
+      if (!id) return;
+      const clip = this.state.findClip(id);
+      if (!clip) return;
 
-              // Split logic for demonstration
-              if (clip.duration > 3) {
-                 const mid = clip.duration / 2;
-                 const c1 = { ...clip, id: 'clip_' + Date.now() + 1, duration: mid - 0.5 };
-                 const c2 = { ...clip, id: 'clip_' + Date.now() + 2, startTime: clip.startTime + mid + 0.5, offset: clip.offset + mid + 0.5, duration: clip.duration - mid - 0.5 };
+      const media = this.state.getMedia(clip.mediaId);
+      if (!media || !media.url) return;
 
-                 if (clip.type === 'video') {
-                     this.state.videoTrack.update(t => [...t.filter(c => c.id !== id), c1, c2]);
-                 } else {
-                     const aTracks = this.state.audioTracks();
-                     this.state.audioTracks.set(aTracks.map(track => {
-                         if (track.some(c => c.id === id)) {
-                             return [...track.filter(c => c.id !== id), c1, c2];
-                         }
-                         return track;
-                     }));
-                 }
+      // Real silence removal based on memory (dynamic threshold 2-3%, 0.25s padding, 0.15s min)
+      const buffer = await this.audio.getWaveform(media.url, media.id);
+      if (!buffer) return;
+
+      this.state.saveState();
+
+      const data = buffer.getChannelData(0);
+      const sampleRate = buffer.sampleRate;
+
+      // Calculate max amplitude in the clip's specific window
+      const startSample = Math.floor(clip.offset * sampleRate);
+      const endSample = Math.min(data.length, Math.floor((clip.offset + clip.duration) * sampleRate));
+
+      let maxAmp = 0;
+      for (let i = startSample; i < endSample; i++) {
+          const v = Math.abs(data[i]);
+          if (v > maxAmp) maxAmp = v;
+      }
+
+      const threshold = maxAmp * 0.03; // 3% of max amplitude
+      const minSilenceLen = Math.floor(0.15 * sampleRate); // 0.15s
+      const padding = Math.floor(0.25 * sampleRate); // 0.25s
+
+      const keepRegions: {start: number, end: number}[] = [];
+      let inSound = false;
+      let soundStart = startSample;
+      let silenceStart = 0;
+
+      for (let i = startSample; i < endSample; i++) {
+          if (Math.abs(data[i]) > threshold) {
+              if (!inSound) {
+                  // End of silence
+                  if (i - silenceStart >= minSilenceLen) {
+                      inSound = true;
+                      soundStart = Math.max(startSample, i - padding);
+                  } else {
+                      // Silence was too short, ignore
+                      inSound = true;
+                  }
+              }
+          } else {
+              if (inSound) {
+                  // Start of potential silence
+                  inSound = false;
+                  silenceStart = i;
+                  keepRegions.push({ start: soundStart, end: Math.min(endSample, i + padding) });
               }
           }
       }
+
+      if (inSound) {
+          keepRegions.push({ start: soundStart, end: endSample });
+      } else if (keepRegions.length === 0) {
+          // No sound found above threshold at all, maybe keep original or just remove whole clip
+          // We'll just keep it as is if we fail to detect any sound
+          return;
+      }
+
+      // Merge overlapping keep regions
+      const merged: {start: number, end: number}[] = [];
+      keepRegions.forEach(r => {
+          if (merged.length === 0) merged.push(r);
+          else {
+              const last = merged[merged.length - 1];
+              if (r.start <= last.end) last.end = Math.max(last.end, r.end);
+              else merged.push(r);
+          }
+      });
+
+      // Generate new clips
+      const newClips: any[] = [];
+      let currentStartTime = clip.startTime;
+
+      merged.forEach((region, index) => {
+          const regionOffset = region.start / sampleRate;
+          const regionDur = (region.end - region.start) / sampleRate;
+          if (regionDur > 0.1) { // Only keep if it's > 0.1s
+              newClips.push({
+                  ...clip,
+                  id: 'clip_' + Date.now() + '_' + index,
+                  startTime: currentStartTime,
+                  offset: regionOffset,
+                  duration: regionDur
+              });
+              currentStartTime += regionDur; // Ripple effect! Attach together.
+          }
+      });
+
+      if (newClips.length === 0) return;
+
+      // Update State
+      if (clip.type === 'video') {
+          this.state.videoTrack.update(t => {
+              const newT = t.filter(c => c.id !== id);
+              // Shift subsequent clips (Ripple edit)
+              const timeDiff = currentStartTime - (clip.startTime + clip.duration);
+              if (timeDiff !== 0) {
+                  newT.forEach(c => {
+                      if (c.startTime >= clip.startTime + clip.duration) {
+                          c.startTime += timeDiff;
+                      }
+                  });
+              }
+              return [...newT, ...newClips].sort((a,b) => a.startTime - b.startTime);
+          });
+      } else {
+          const aTracks = this.state.audioTracks();
+          this.state.audioTracks.set(aTracks.map(track => {
+              if (track.some(c => c.id === id)) {
+                  const newT = track.filter(c => c.id !== id);
+                  const timeDiff = currentStartTime - (clip.startTime + clip.duration);
+                  if (timeDiff !== 0) {
+                      newT.forEach(c => {
+                          if (c.startTime >= clip.startTime + clip.duration) {
+                              c.startTime += timeDiff;
+                          }
+                      });
+                  }
+                  return [...newT, ...newClips].sort((a,b) => a.startTime - b.startTime);
+              }
+              return track;
+          }));
+      }
+      this.state.selectedClipId.set(null);
   }
 }

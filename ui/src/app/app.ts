@@ -4,6 +4,8 @@ import { Player } from './components/player/player';
 import { Timeline } from './components/timeline/timeline';
 import { StateService } from './services/state';
 import { AudioService } from './services/audio';
+import { ExportService } from './services/export';
+import { ViewChild } from '@angular/core';
 
 @Component({
   selector: 'app-root',
@@ -14,8 +16,11 @@ import { AudioService } from './services/audio';
 })
 export class App {
   protected readonly title = signal('UhCut');
+  @ViewChild(Player) playerComponent!: Player;
+
   protected state = inject(StateService);
   protected audio = inject(AudioService);
+  protected exportSvc = inject(ExportService);
 
   @HostListener('window:keydown', ['$event'])
   handleKeyDown(event: KeyboardEvent) {
@@ -46,6 +51,10 @@ export class App {
 
   exportVideo() {
     console.log("Export started...");
-    alert("Export started... (This is a placeholder for the export process)");
+    if (this.playerComponent && this.playerComponent.mainVideo) {
+      this.exportSvc.exportVideo(this.state, this.audio, this.playerComponent.mainVideo.nativeElement);
+    } else {
+      alert("Player not ready.");
+    }
   }
 }

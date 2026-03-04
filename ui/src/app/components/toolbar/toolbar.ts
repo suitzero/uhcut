@@ -388,17 +388,9 @@ export class Toolbar {
       if (clip.type === 'video') {
           this.state.videoTrack.update(t => {
               const newT = t.filter(c => c.id !== id);
-              // Shift subsequent clips (Ripple edit)
-              const timeDiff = currentStartTime - (clip.startTime + clip.duration);
-              if (timeDiff !== 0) {
-                  newT.forEach(c => {
-                      if (c.startTime >= clip.startTime + clip.duration) {
-                          c.startTime += timeDiff;
-                      }
-                  });
-              }
               return [...newT, ...newClips].sort((a,b) => a.startTime - b.startTime);
           });
+          this.state.repackVideoTrack();
       } else {
           const aTracks = this.state.audioTracks();
           this.state.audioTracks.set(aTracks.map(track => {

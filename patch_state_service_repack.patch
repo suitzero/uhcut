@@ -1,0 +1,47 @@
+--- ui/src/app/services/state.ts
++++ ui/src/app/services/state.ts
+@@ -58,9 +58,6 @@
+   exportUrl = signal<string | null>(null);
+
+-  // Reorder Mode
+-  reorderMode = signal(false);
+-
+   // History Stacks
+   private historyStack: string[] = [];
+   private redoStack: string[] = [];
+@@ -95,6 +92,19 @@
+       }
+   }
+
++  repackVideoTrack() {
++      const vTrack = this.videoTrack();
++      const sorted = [...vTrack].sort((a, b) => a.startTime - b.startTime);
++      let currentTime = 0;
++      const repacked = sorted.map(clip => {
++          const newClip = { ...clip, startTime: currentTime };
++          currentTime += clip.duration;
++          return newClip;
++      });
++      this.videoTrack.set(repacked);
++      this.saveState();
++  }
++
+   // Smart Add
+   addToTimelineSmart(item: MediaItem) {
+       this.saveState();
+@@ -193,6 +203,7 @@
+       this.audioTracks.update(tracks => tracks.map(t => t.filter(c => c.id !== id)));
+
+       if (this.selectedClipId() === id) this.selectedClipId.set(null);
++      this.repackVideoTrack();
+   }
+
+   updateClip(id: string, updates: Partial<Clip>) {
+@@ -237,6 +248,7 @@
+               return track;
+           }));
+       }
++      this.repackVideoTrack();
+   }
+
+   moveAudioClipToTrack(clipId: string, targetTrackIndex: number, newStartTime: number) {

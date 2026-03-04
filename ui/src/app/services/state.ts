@@ -57,8 +57,8 @@ export class StateService {
   exportProgress = signal(0);
   exportUrl = signal<string | null>(null);
 
-  // Reorder Mode
-  reorderMode = signal(false);
+
+
 
   // History Stacks
   private historyStack: string[] = [];
@@ -83,6 +83,7 @@ export class StateService {
       const vIndex = vTrack.findIndex(c => c.mediaId === mediaId);
       if (vIndex !== -1) {
           this.updateClip(vTrack[vIndex].id, { duration });
+          this.repackVideoTrack();
           return;
       }
       const aTracks = this.audioTracks();
@@ -93,6 +94,19 @@ export class StateService {
               return;
           }
       }
+  }
+
+  repackVideoTrack() {
+      const vTrack = this.videoTrack();
+      const sorted = [...vTrack].sort((a, b) => a.startTime - b.startTime);
+      let currentTime = 0;
+      const repacked = sorted.map(clip => {
+          const newClip = { ...clip, startTime: currentTime };
+          currentTime += clip.duration;
+          return newClip;
+      });
+      // Do not call saveState here, as it might duplicate undo histories when called in sequence.
+      this.videoTrack.set(repacked);
   }
 
   // Smart Add
@@ -117,6 +131,7 @@ export class StateService {
             : null;
         clip.startTime = lastClip ? (lastClip.startTime + lastClip.duration) : 0;
         this.videoTrack.update(tracks => [...tracks, clip]);
+        this.repackVideoTrack();
     } else {
         const audioTracks = this.audioTracks();
         let added = false;
@@ -161,6 +176,7 @@ export class StateService {
 
       if (mediaItem.type === 'video') {
           this.videoTrack.update(t => [...t, clip]);
+          this.repackVideoTrack();
       } else {
           const audioTracks = this.audioTracks();
           const newAudioTracks = [...audioTracks];
@@ -195,6 +211,9 @@ export class StateService {
           const newTrack = [...vTrack];
           newTrack[vIndex] = { ...newTrack[vIndex], ...updates };
           this.videoTrack.set(newTrack);
+          if (updates.duration !== undefined) {
+              this.repackVideoTrack();
+          }
           return;
       }
 
@@ -267,6 +286,8 @@ export class StateService {
       if (this.selectedClipId() === clipId) {
           this.selectedClipId.set(null);
       }
+
+      this.repackVideoTrack();
   }
 
   splitClip(): void {
@@ -314,6 +335,7 @@ export class StateService {
               });
               this.audioTracks.set(newATracks);
           }
+          this.repackVideoTrack();
       }
   }
 

@@ -42,10 +42,6 @@ export class Timeline {
   longPressTimeout: any = null;
   hasDragged = false;
 
-  // Reorder State
-  reorderClips: Clip[] = [];
-  reorderDragIndex = -1;
-  reorderDragOverIndex = -1;
 
   // Pinch Zoom State
   initialPinchDistance = 0;
@@ -227,7 +223,6 @@ export class Timeline {
   }
 
   onMouseDown(event: MouseEvent, clip: Clip) {
-      if (this.stateService.reorderMode()) return;
       this.dragClipId = clip.id;
       this.dragStartX = event.clientX;
       this.dragOriginalStart = clip.startTime;
@@ -236,17 +231,9 @@ export class Timeline {
       this.stateService.selectedClipId.set(clip.id);
       this.isDragging = true;
       event.stopPropagation();
-
-      if (clip.type === 'video') {
-          if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
-          this.longPressTimeout = setTimeout(() => {
-              this.startReorderMode();
-          }, 2000);
-      }
   }
 
   onTouchStart(event: TouchEvent, clip: Clip) {
-      if (this.stateService.reorderMode()) return;
       // Prevent default scrolling only if we are going to drag
       // Actually let's not prevent default here to allow scrolling if they don't hold
       this.dragClipId = clip.id;
@@ -261,22 +248,6 @@ export class Timeline {
       this.dragTimeout = setTimeout(() => {
           this.isDragging = true;
       }, 300);
-
-      if (clip.type === 'video') {
-          if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
-          this.longPressTimeout = setTimeout(() => {
-              this.startReorderMode();
-          }, 2000);
-      }
-  }
-
-  startReorderMode() {
-      if (this.isDragging) this.isDragging = false;
-      this.dragClipId = null;
-      if (this.dragTimeout) clearTimeout(this.dragTimeout);
-
-      this.reorderClips = [...this.stateService.videoTrack()].sort((a,b) => a.startTime - b.startTime);
-      this.stateService.reorderMode.set(true);
   }
 
   @HostListener('window:mousemove', ['$event'])
@@ -290,7 +261,7 @@ export class Timeline {
 
       const deltaPx = event.clientX - this.dragStartX;
       const deltaSec = deltaPx / this.zoom();
-      let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
+      let newStartTime = this.dragOriginalTrackType === 'video' ? this.dragOriginalStart + deltaSec : Math.max(0, this.dragOriginalStart + deltaSec);
 
       // We handle visual updates of time immediately via store
       // Target track resolution is handled on mouseup for simplicity and performance
@@ -340,7 +311,7 @@ export class Timeline {
       this.hasDragged = true;
       event.preventDefault(); // Stop scrolling while dragging clip
       const deltaSec = deltaPx / this.zoom();
-      let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
+      let newStartTime = this.dragOriginalTrackType === 'video' ? this.dragOriginalStart + deltaSec : Math.max(0, this.dragOriginalStart + deltaSec);
       this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
   }
 
@@ -365,6 +336,8 @@ export class Timeline {
               if (clip) {
                   this.stateService.moveAudioClipToTrack(this.dragClipId, targetTrackIndex, clip.startTime);
               }
+          } else if (this.dragClipId && this.dragOriginalTrackType === 'video') {
+              this.stateService.repackVideoTrack();
           }
 
           this.isDragging = false;
@@ -395,6 +368,8 @@ export class Timeline {
                       this.stateService.moveAudioClipToTrack(this.dragClipId, targetTrackIndex, clip.startTime);
                   }
               }
+          } else if (this.dragClipId && this.dragOriginalTrackType === 'video') {
+              this.stateService.repackVideoTrack();
           }
           this.isDragging = false;
           this.dragClipId = null;
@@ -496,70 +471,6 @@ export class Timeline {
                this.processFile(file, startTime);
           });
       }
-  }
-
-  // Reorder mode actions
-  closeReorderMode() {
-      this.stateService.reorderMode.set(false);
-  }
-
-  saveReorderMode() {
-      let currentStartTime = 0;
-      this.reorderClips.forEach(clip => {
-          this.stateService.updateClip(clip.id, { startTime: currentStartTime });
-          currentStartTime += clip.duration;
-      });
-      this.stateService.saveState();
-      this.stateService.reorderMode.set(false);
-  }
-
-  onReorderDragStart(index: number) {
-      this.reorderDragIndex = index;
-  }
-
-  onReorderDragOver(event: DragEvent, index: number) {
-      event.preventDefault();
-      this.reorderDragOverIndex = index;
-  }
-
-  onReorderDrop(event: DragEvent, index: number) {
-      event.preventDefault();
-      if (this.reorderDragIndex > -1 && this.reorderDragIndex !== index) {
-          const item = this.reorderClips.splice(this.reorderDragIndex, 1)[0];
-          this.reorderClips.splice(index, 0, item);
-      }
-      this.reorderDragIndex = -1;
-      this.reorderDragOverIndex = -1;
-  }
-
-  // Touch reorder
-  reorderTouchStartIndex = -1;
-  onReorderTouchStart(index: number) {
-      this.reorderTouchStartIndex = index;
-  }
-
-  onReorderTouchMove(event: TouchEvent) {
-      event.preventDefault(); // prevent scrolling
-      const touch = event.touches[0];
-      const el = document.elementFromPoint(touch.clientX, touch.clientY);
-      if (el) {
-          const clipEl = el.closest('.reorder-clip');
-          if (clipEl) {
-              const indexStr = clipEl.getAttribute('data-index');
-              if (indexStr) {
-                  this.reorderDragOverIndex = parseInt(indexStr, 10);
-              }
-          }
-      }
-  }
-
-  onReorderTouchEnd() {
-      if (this.reorderTouchStartIndex > -1 && this.reorderDragOverIndex > -1 && this.reorderTouchStartIndex !== this.reorderDragOverIndex) {
-          const item = this.reorderClips.splice(this.reorderTouchStartIndex, 1)[0];
-          this.reorderClips.splice(this.reorderDragOverIndex, 0, item);
-      }
-      this.reorderTouchStartIndex = -1;
-      this.reorderDragOverIndex = -1;
   }
 
   processFile(file: File, startTime: number) {

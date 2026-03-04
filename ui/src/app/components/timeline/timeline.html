@@ -54,34 +54,4 @@
     </div>
     <div class="playhead" [style.left.px]="playbackTime() * zoom()"></div>
 
-    <!-- Reorder Overlay -->
-    @if (stateService.reorderMode()) {
-        <div class="reorder-overlay">
-            <div class="reorder-header">
-                <h3>Reorder Clips</h3>
-                <div>
-                    <button class="reorder-btn close-btn" (click)="closeReorderMode()">Cancel</button>
-                    <button class="reorder-btn save-btn" (click)="saveReorderMode()">Save</button>
-                </div>
-            </div>
-            <div class="reorder-grid">
-                @for (clip of reorderClips; track clip.id; let i = $index) {
-                    <div class="reorder-clip"
-                         [attr.data-index]="i"
-                         [class.dragging]="reorderDragIndex === i || reorderTouchStartIndex === i"
-                         [class.drag-over]="reorderDragOverIndex === i"
-                         draggable="true"
-                         (dragstart)="onReorderDragStart(i)"
-                         (dragover)="onReorderDragOver($event, i)"
-                         (drop)="onReorderDrop($event, i)"
-                         (touchstart)="onReorderTouchStart(i)"
-                         (touchmove)="onReorderTouchMove($event)"
-                         (touchend)="onReorderTouchEnd()">
-                        <div class="reorder-clip-thumb" [innerHTML]="thumbnails[clip.id] || ''"></div>
-                        <div class="reorder-clip-name">{{ getMediaName(clip) }}</div>
-                    </div>
-                }
-            </div>
-        </div>
-    }
 </div>

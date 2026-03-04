@@ -18,4 +18,25 @@
 
   <!-- Timeline Component -->
   <app-timeline></app-timeline>
+
+  <!-- Export Progress Overlay -->
+  @if (state.isExporting()) {
+    <div class="export-overlay">
+      <div class="export-modal">
+        <h3>Exporting Video...</h3>
+        <div class="progress-bar-container">
+          <div class="progress-bar" [style.width.%]="state.exportProgress()"></div>
+        </div>
+        <p>{{ state.exportProgress() }}%</p>
+
+        @if (state.exportUrl()) {
+          <div class="export-actions">
+            <p>Export Complete!</p>
+            <button class="save-btn" (click)="saveExportedVideo()">Save Video</button>
+            <button class="close-btn" (click)="closeExport()">Close</button>
+          </div>
+        }
+      </div>
+    </div>
+  }
 </div>

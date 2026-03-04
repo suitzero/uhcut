@@ -115,9 +115,133 @@ export class Toolbar {
           const clip = this.state.findClip(id);
           if (clip && clip.type === 'video') {
               this.state.saveState();
-              this.state.updateClip(id, { stabilized: !clip.stabilized });
+              const willStabilize = !clip.stabilized;
+
+              if (willStabilize && (!clip.stabilizationData || clip.stabilizationData.length === 0)) {
+                  // Compute stabilization data
+                  this.computeStabilization(clip);
+              } else {
+                  this.state.updateClip(id, { stabilized: willStabilize });
+              }
           }
       }
+  }
+
+  async computeStabilization(clip: any) {
+      const media = this.state.getMedia(clip.mediaId);
+      if (!media || !media.url) return;
+
+      alert("Computing stabilization data... This may take a few moments.");
+
+      const video = document.createElement('video');
+      video.src = media.url;
+      video.muted = true;
+      video.playsInline = true;
+
+      await new Promise<void>(res => {
+          video.onloadeddata = () => res();
+          video.onerror = () => res();
+      });
+
+      if (!video.videoWidth) return;
+
+      const canvas = document.createElement('canvas');
+      // Low resolution for faster optical flow / block matching
+      const targetSize = 64;
+      const scale = targetSize / Math.max(video.videoWidth, video.videoHeight);
+      canvas.width = Math.floor(video.videoWidth * scale);
+      canvas.height = Math.floor(video.videoHeight * scale);
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      const fps = 15; // sample rate for stabilization
+      const totalFrames = Math.ceil(clip.duration * fps);
+      const data: {time: number, dx: number, dy: number}[] = [];
+
+      let prevGray: Uint8ClampedArray | null = null;
+      let cumDx = 0;
+      let cumDy = 0;
+
+      for (let i = 0; i < totalFrames; i++) {
+          const t = clip.offset + (i / fps);
+          video.currentTime = t;
+          await new Promise<void>(res => {
+              const onSeeked = () => { video.removeEventListener('seeked', onSeeked); res(); };
+              video.addEventListener('seeked', onSeeked);
+              if (Math.abs(video.currentTime - t) < 0.1) {
+                  video.removeEventListener('seeked', onSeeked); res();
+              }
+              setTimeout(() => { video.removeEventListener('seeked', onSeeked); res(); }, 500);
+          });
+
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+          const currGray = new Uint8ClampedArray(canvas.width * canvas.height);
+          for (let j = 0; j < currGray.length; j++) {
+              currGray[j] = (imgData[j*4] * 0.299 + imgData[j*4+1] * 0.587 + imgData[j*4+2] * 0.114);
+          }
+
+          if (prevGray) {
+              // Very naive whole-frame SAD matching (search within a small window)
+              let minSad = Infinity;
+              let bestDx = 0;
+              let bestDy = 0;
+              const range = 4;
+
+              for (let dy = -range; dy <= range; dy++) {
+                  for (let dx = -range; dx <= range; dx++) {
+                      let sad = 0;
+                      let count = 0;
+                      for (let y = range; y < canvas.height - range; y += 2) {
+                          for (let x = range; x < canvas.width - range; x += 2) {
+                              const currIdx = y * canvas.width + x;
+                              const prevIdx = (y + dy) * canvas.width + (x + dx);
+                              sad += Math.abs(currGray[currIdx] - prevGray[prevIdx]);
+                              count++;
+                          }
+                      }
+                      if (count > 0 && sad < minSad) {
+                          minSad = sad;
+                          bestDx = dx;
+                          bestDy = dy;
+                      }
+                  }
+              }
+
+              // Scale motion vector back to original resolution scale
+              cumDx += bestDx / scale;
+              cumDy += bestDy / scale;
+          }
+
+          data.push({ time: i / fps, dx: cumDx, dy: cumDy });
+          prevGray = currGray;
+
+          // Yield
+          await new Promise(r => setTimeout(r, 0));
+      }
+
+      // Smooth the trajectory (Moving Average Filter)
+      const windowSize = Math.floor(fps * 1.5); // 1.5 seconds window
+      const smoothed = data.map((d, i) => {
+          let sumDx = 0, sumDy = 0, count = 0;
+          for (let j = Math.max(0, i - windowSize); j <= Math.min(data.length - 1, i + windowSize); j++) {
+              sumDx += data[j].dx;
+              sumDy += data[j].dy;
+              count++;
+          }
+          return { time: d.time, dx: sumDx / count, dy: sumDy / count };
+      });
+
+      // Calculate differential (correction to apply)
+      const correction = data.map((d, i) => ({
+          time: d.time,
+          dx: smoothed[i].dx - d.dx,
+          dy: smoothed[i].dy - d.dy
+      }));
+
+      this.state.updateClip(clip.id, { stabilized: true, stabilizationData: correction });
+      alert("Stabilization complete!");
   }
 
   async toggleRecording() {

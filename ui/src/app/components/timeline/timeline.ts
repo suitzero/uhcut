@@ -39,7 +39,13 @@ export class Timeline {
   dragOriginalStart = 0;
   dragOriginalTrackType = 'video';
   dragTimeout: any = null;
+  longPressTimeout: any = null;
   hasDragged = false;
+
+  // Reorder State
+  reorderClips: Clip[] = [];
+  reorderDragIndex = -1;
+  reorderDragOverIndex = -1;
 
   // Pinch Zoom State
   initialPinchDistance = 0;
@@ -102,6 +108,9 @@ export class Timeline {
       video.style.left = '0';
       video.style.opacity = '0.01';
       video.style.pointerEvents = 'none';
+      video.style.zIndex = '-9999';
+      video.style.width = '1px';
+      video.style.height = '1px';
       document.body.appendChild(video);
 
       // We don't await the initial readyState here, we let it process asynchronously
@@ -218,6 +227,7 @@ export class Timeline {
   }
 
   onMouseDown(event: MouseEvent, clip: Clip) {
+      if (this.stateService.reorderMode()) return;
       this.dragClipId = clip.id;
       this.dragStartX = event.clientX;
       this.dragOriginalStart = clip.startTime;
@@ -226,9 +236,17 @@ export class Timeline {
       this.stateService.selectedClipId.set(clip.id);
       this.isDragging = true;
       event.stopPropagation();
+
+      if (clip.type === 'video') {
+          if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
+          this.longPressTimeout = setTimeout(() => {
+              this.startReorderMode();
+          }, 2000);
+      }
   }
 
   onTouchStart(event: TouchEvent, clip: Clip) {
+      if (this.stateService.reorderMode()) return;
       // Prevent default scrolling only if we are going to drag
       // Actually let's not prevent default here to allow scrolling if they don't hold
       this.dragClipId = clip.id;
@@ -243,10 +261,31 @@ export class Timeline {
       this.dragTimeout = setTimeout(() => {
           this.isDragging = true;
       }, 300);
+
+      if (clip.type === 'video') {
+          if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
+          this.longPressTimeout = setTimeout(() => {
+              this.startReorderMode();
+          }, 2000);
+      }
+  }
+
+  startReorderMode() {
+      if (this.isDragging) this.isDragging = false;
+      this.dragClipId = null;
+      if (this.dragTimeout) clearTimeout(this.dragTimeout);
+
+      this.reorderClips = [...this.stateService.videoTrack()].sort((a,b) => a.startTime - b.startTime);
+      this.stateService.reorderMode.set(true);
   }
 
   @HostListener('window:mousemove', ['$event'])
   onMouseMove(event: MouseEvent) {
+      if (this.longPressTimeout && (Math.abs(event.clientX - this.dragStartX) > 5)) {
+          clearTimeout(this.longPressTimeout);
+          this.longPressTimeout = null;
+      }
+
       if (!this.isDragging || !this.dragClipId) return;
 
       const deltaPx = event.clientX - this.dragStartX;
@@ -261,6 +300,13 @@ export class Timeline {
 
   @HostListener('window:touchmove', ['$event'])
   onTouchMove(event: TouchEvent) {
+      if (this.longPressTimeout && event.touches.length > 0) {
+          if (Math.abs(event.touches[0].clientX - this.dragStartX) > 10) {
+              clearTimeout(this.longPressTimeout);
+              this.longPressTimeout = null;
+          }
+      }
+
       if (event.touches.length === 2) {
           event.preventDefault();
           const dist = Math.hypot(
@@ -300,6 +346,7 @@ export class Timeline {
 
   @HostListener('window:mouseup', ['$event'])
   onMouseUp(event: MouseEvent) {
+      if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
       if (this.dragTimeout) clearTimeout(this.dragTimeout);
       if (this.isDragging) {
           if (this.dragClipId && this.dragOriginalTrackType === 'audio') {
@@ -328,6 +375,7 @@ export class Timeline {
 
   @HostListener('window:touchend', ['$event'])
   onTouchEnd(event: TouchEvent) {
+      if (this.longPressTimeout) clearTimeout(this.longPressTimeout);
       if (event.touches.length < 2) {
           this.initialPinchDistance = 0;
       }
@@ -448,6 +496,70 @@ export class Timeline {
                this.processFile(file, startTime);
           });
       }
+  }
+
+  // Reorder mode actions
+  closeReorderMode() {
+      this.stateService.reorderMode.set(false);
+  }
+
+  saveReorderMode() {
+      let currentStartTime = 0;
+      this.reorderClips.forEach(clip => {
+          this.stateService.updateClip(clip.id, { startTime: currentStartTime });
+          currentStartTime += clip.duration;
+      });
+      this.stateService.saveState();
+      this.stateService.reorderMode.set(false);
+  }
+
+  onReorderDragStart(index: number) {
+      this.reorderDragIndex = index;
+  }
+
+  onReorderDragOver(event: DragEvent, index: number) {
+      event.preventDefault();
+      this.reorderDragOverIndex = index;
+  }
+
+  onReorderDrop(event: DragEvent, index: number) {
+      event.preventDefault();
+      if (this.reorderDragIndex > -1 && this.reorderDragIndex !== index) {
+          const item = this.reorderClips.splice(this.reorderDragIndex, 1)[0];
+          this.reorderClips.splice(index, 0, item);
+      }
+      this.reorderDragIndex = -1;
+      this.reorderDragOverIndex = -1;
+  }
+
+  // Touch reorder
+  reorderTouchStartIndex = -1;
+  onReorderTouchStart(index: number) {
+      this.reorderTouchStartIndex = index;
+  }
+
+  onReorderTouchMove(event: TouchEvent) {
+      event.preventDefault(); // prevent scrolling
+      const touch = event.touches[0];
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      if (el) {
+          const clipEl = el.closest('.reorder-clip');
+          if (clipEl) {
+              const indexStr = clipEl.getAttribute('data-index');
+              if (indexStr) {
+                  this.reorderDragOverIndex = parseInt(indexStr, 10);
+              }
+          }
+      }
+  }
+
+  onReorderTouchEnd() {
+      if (this.reorderTouchStartIndex > -1 && this.reorderDragOverIndex > -1 && this.reorderTouchStartIndex !== this.reorderDragOverIndex) {
+          const item = this.reorderClips.splice(this.reorderTouchStartIndex, 1)[0];
+          this.reorderClips.splice(this.reorderDragOverIndex, 0, item);
+      }
+      this.reorderTouchStartIndex = -1;
+      this.reorderDragOverIndex = -1;
   }
 
   processFile(file: File, startTime: number) {

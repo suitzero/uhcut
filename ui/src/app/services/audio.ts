@@ -15,11 +15,26 @@ export class AudioService {
   private waveformCache: { [key: string]: AudioBuffer } = {};
 
   constructor() {
-    this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    this.masterGain = this.audioCtx.createGain();
-    this.masterGain.connect(this.audioCtx.destination);
-    this.exportDest = this.audioCtx.createMediaStreamDestination();
-    this.masterGain.connect(this.exportDest);
+    // Check if AudioContext is available (in browser)
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContextClass) {
+        this.audioCtx = new AudioContextClass();
+        this.masterGain = this.audioCtx.createGain();
+        this.masterGain.connect(this.audioCtx.destination);
+
+        // Handle JSDOM/Node environment where createMediaStreamDestination might not exist
+        if (typeof this.audioCtx.createMediaStreamDestination === 'function') {
+            this.exportDest = this.audioCtx.createMediaStreamDestination();
+            this.masterGain.connect(this.exportDest);
+        } else {
+            this.exportDest = null as any;
+        }
+    } else {
+        // Mock for testing environment
+        this.audioCtx = {} as any;
+        this.masterGain = { connect: () => {}, gain: { value: 1 } } as any;
+        this.exportDest = null as any;
+    }
   }
 
   async getWaveform(url: string, mediaId: string): Promise<AudioBuffer | null> {

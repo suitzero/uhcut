@@ -41,12 +41,15 @@ export class ExportService {
       width = Math.round(width / 2) * 2;
       height = Math.round(height / 2) * 2;
 
-      alert(`Exporting video (${width}x${height}). This may take a while...`);
+      stateService.isExporting.set(true);
+      stateService.exportProgress.set(0);
+      stateService.exportUrl.set(null);
 
       // We use MP4Box via window.MP4Box
       const MP4Box = (window as any).MP4Box;
       if (!MP4Box) {
         alert('MP4Box not loaded!');
+        stateService.isExporting.set(false);
         return;
       }
 
@@ -168,8 +171,25 @@ export class ExportService {
               if (videoClip.stabilized) {
                   const cropW = width / 1.3;
                   const cropH = height / 1.3;
-                  const sx = (width - cropW) / 2;
-                  const sy = (height - cropH) / 2;
+                  let sx = (width - cropW) / 2;
+                  let sy = (height - cropH) / 2;
+
+                  if (videoClip.stabilizationData) {
+                      const relTime = t - videoClip.startTime;
+                      let bestCorrection = { dx: 0, dy: 0 };
+                      for (let d of videoClip.stabilizationData) {
+                          if (d.time <= relTime) {
+                              bestCorrection = d;
+                          } else {
+                              break;
+                          }
+                      }
+                      // Apply inverse of translation to source crop to simulate moving the camera
+                      // The CSS translate moves the video, which means the crop window should move in opposite direction
+                      sx -= bestCorrection.dx;
+                      sy -= bestCorrection.dy;
+                  }
+
                   ctx.drawImage(videoElement, sx, sy, cropW, cropH, 0, 0, width, height);
               } else {
                   ctx.drawImage(videoElement, 0, 0, width, height);
@@ -191,6 +211,10 @@ export class ExportService {
           // Wait to match real time to allow MediaRecorder to catch audio?
           // If we await real time, export takes duration.
           await new Promise(r => setTimeout(r, 1000 / fps));
+
+          if (f % 5 === 0) {
+              stateService.exportProgress.set(Math.floor((f / totalFrames) * 100));
+          }
       }
 
       await encoder.flush();
@@ -201,12 +225,18 @@ export class ExportService {
           setTimeout(res, 1000);
       });
 
+      stateService.exportProgress.set(100);
+
       // Muxing logic simplified (assuming video only or simple audio support via mp4box)
-      file.save('exported_video.mp4');
-      alert('Export complete!');
+      // Save using file buffer and Blob URL instead of file.save()
+      const buffer = file.getBuffer();
+      const blob = new Blob([buffer], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      stateService.exportUrl.set(url);
 
     } catch (err: any) {
        console.error(err);
+       stateService.isExporting.set(false);
        alert('Export failed: ' + err.message);
     }
   }

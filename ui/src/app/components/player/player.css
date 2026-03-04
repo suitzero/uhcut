@@ -16,6 +16,7 @@
     position: relative;
     padding: 10px 10px 0 10px;
     min-height: 0;
+    overflow: hidden;
 }
 
 .video-container {
@@ -26,6 +27,7 @@
     align-items: center;
     justify-content: center;
     position: relative;
+    min-height: 0;
 }
 
 #main-video {
@@ -51,6 +53,7 @@ video {
     background: #111;
     z-index: 10;
     flex-shrink: 0;
+    margin-bottom: 0;
 }
 
 .playback-controls button {

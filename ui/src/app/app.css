@@ -54,6 +54,7 @@ app-player {
     flex: 1;
     display: flex;
     min-height: 0; /* important for flex items to not overflow */
+    overflow: hidden;
 }
 
 app-toolbar {

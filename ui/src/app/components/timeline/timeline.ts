@@ -38,6 +38,12 @@ export class Timeline {
   dragStartX = 0;
   dragOriginalStart = 0;
   dragOriginalTrackType = 'video';
+  dragTimeout: any = null;
+  hasDragged = false;
+
+  // Pinch Zoom State
+  initialPinchDistance = 0;
+  initialPinchZoom = 0;
 
   // Waveform Cache (local)
   waveforms: { [key: string]: string } = {}; // DataURL or similar? No, draw to canvas directly usually.
@@ -98,12 +104,18 @@ export class Timeline {
       video.style.pointerEvents = 'none';
       document.body.appendChild(video);
 
+      // We don't await the initial readyState here, we let it process asynchronously
+      // without blocking the rendering or the main thread loop entirely, but
+      // inside a timeout or requestAnimationFrame to yield control.
       await new Promise<void>((resolve) => {
           if (video.readyState >= 2) {
               resolve();
+          } else {
+              video.onloadeddata = () => resolve();
+              video.onerror = () => resolve();
+              // Failsafe
+              setTimeout(() => resolve(), 3000);
           }
-          video.onloadeddata = () => resolve();
-          video.onerror = () => resolve();
       });
 
       if (!video.videoWidth) {
@@ -129,25 +141,38 @@ export class Timeline {
       const numThumbs = Math.max(1, Math.ceil(clip.duration / 5));
       const interval = clip.duration / numThumbs;
 
+      // Generate thumbs in chunks to avoid blocking the UI thread for long clips
       for (let i = 0; i < numThumbs; i++) {
           const time = clip.offset + (i * interval);
           video.currentTime = time;
           await new Promise<void>((resolve) => {
-              if ('requestVideoFrameCallback' in video) {
-                  (video as any).requestVideoFrameCallback(() => resolve());
+              const onSeeked = () => {
+                  (video as HTMLVideoElement).removeEventListener('seeked', onSeeked);
+                  if ('requestVideoFrameCallback' in video) {
+                      (video as any).requestVideoFrameCallback(() => resolve());
+                  } else {
+                      setTimeout(() => resolve(), 10); // yield
+                  }
+              };
+              (video as HTMLVideoElement).addEventListener('seeked', onSeeked);
+
+              if (video.readyState >= 2 && Math.abs(video.currentTime - time) < 0.1) {
+                  video.removeEventListener('seeked', onSeeked);
+                  resolve();
               } else {
-                  const onSeeked = () => {
-                      (video as HTMLVideoElement).removeEventListener('seeked', onSeeked);
-                      resolve();
-                  };
-                  (video as HTMLVideoElement).addEventListener('seeked', onSeeked);
+                  setTimeout(() => { video.removeEventListener('seeked', onSeeked); resolve(); }, 500);
               }
-              setTimeout(() => resolve(), 500);
           });
 
           ctx.drawImage(video, 0, 0, thumbWidth, trackHeight);
           const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
           html += `<img src="${dataUrl}" style="width: ${thumbWidth}px; height: ${trackHeight}px; pointer-events: none; display: inline-block;">`;
+
+          // Update progressively
+          if (i % 3 === 0) {
+             this.thumbnails[clip.id] = this.sanitizer.bypassSecurityTrustHtml(html);
+             await new Promise(r => setTimeout(r, 0)); // yield to main thread
+          }
       }
 
       this.thumbnails[clip.id] = this.sanitizer.bypassSecurityTrustHtml(html);
@@ -193,22 +218,31 @@ export class Timeline {
   }
 
   onMouseDown(event: MouseEvent, clip: Clip) {
-      this.isDragging = true;
       this.dragClipId = clip.id;
       this.dragStartX = event.clientX;
       this.dragOriginalStart = clip.startTime;
       this.dragOriginalTrackType = clip.type;
+      this.hasDragged = false;
       this.stateService.selectedClipId.set(clip.id);
+      this.isDragging = true;
       event.stopPropagation();
   }
 
   onTouchStart(event: TouchEvent, clip: Clip) {
-      this.isDragging = true;
+      // Prevent default scrolling only if we are going to drag
+      // Actually let's not prevent default here to allow scrolling if they don't hold
       this.dragClipId = clip.id;
       this.dragStartX = event.touches[0].clientX;
       this.dragOriginalStart = clip.startTime;
       this.dragOriginalTrackType = clip.type;
+      this.hasDragged = false;
       this.stateService.selectedClipId.set(clip.id);
+
+      // Delay before actual dragging is active to distinguish between scroll and drag
+      if (this.dragTimeout) clearTimeout(this.dragTimeout);
+      this.dragTimeout = setTimeout(() => {
+          this.isDragging = true;
+      }, 300);
   }
 
   @HostListener('window:mousemove', ['$event'])
@@ -227,8 +261,38 @@ export class Timeline {
 
   @HostListener('window:touchmove', ['$event'])
   onTouchMove(event: TouchEvent) {
-      if (!this.isDragging || !this.dragClipId) return;
+      if (event.touches.length === 2) {
+          event.preventDefault();
+          const dist = Math.hypot(
+              event.touches[0].clientX - event.touches[1].clientX,
+              event.touches[0].clientY - event.touches[1].clientY
+          );
+          if (this.initialPinchDistance) {
+              const scale = dist / this.initialPinchDistance;
+              const newZoom = Math.max(1, Math.min(200, this.initialPinchZoom * scale));
+              this.stateService.zoom.set(newZoom);
+          } else {
+              this.initialPinchDistance = dist;
+              this.initialPinchZoom = this.stateService.zoom();
+          }
+          return;
+      }
+
+      if (!this.dragClipId) return;
+
       const deltaPx = event.touches[0].clientX - this.dragStartX;
+
+      // Cancel drag if they move before the timeout (likely scrolling)
+      if (!this.isDragging && Math.abs(deltaPx) > 10) {
+          if (this.dragTimeout) clearTimeout(this.dragTimeout);
+          this.dragClipId = null;
+          return;
+      }
+
+      if (!this.isDragging) return;
+
+      this.hasDragged = true;
+      event.preventDefault(); // Stop scrolling while dragging clip
       const deltaSec = deltaPx / this.zoom();
       let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
       this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
@@ -236,6 +300,7 @@ export class Timeline {
 
   @HostListener('window:mouseup', ['$event'])
   onMouseUp(event: MouseEvent) {
+      if (this.dragTimeout) clearTimeout(this.dragTimeout);
       if (this.isDragging) {
           if (this.dragClipId && this.dragOriginalTrackType === 'audio') {
               const rect = this.timelineTracks.nativeElement.getBoundingClientRect();
@@ -263,6 +328,11 @@ export class Timeline {
 
   @HostListener('window:touchend', ['$event'])
   onTouchEnd(event: TouchEvent) {
+      if (event.touches.length < 2) {
+          this.initialPinchDistance = 0;
+      }
+
+      if (this.dragTimeout) clearTimeout(this.dragTimeout);
       if (this.isDragging) {
           if (this.dragClipId && this.dragOriginalTrackType === 'audio') {
               const rect = this.timelineTracks.nativeElement.getBoundingClientRect();
@@ -321,6 +391,10 @@ export class Timeline {
   }
 
   onClipClick(event: MouseEvent, clip: Clip) {
+      if (this.hasDragged) {
+          event.stopPropagation();
+          return;
+      }
       event.stopPropagation();
       this.stateService.selectedClipId.set(clip.id);
   }

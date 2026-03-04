@@ -1,0 +1,18 @@
+--- ui/src/app/components/timeline/timeline.ts
++++ ui/src/app/components/timeline/timeline.ts
+@@ -194,6 +194,15 @@
+       event.stopPropagation();
+   }
+
++  onTouchStart(event: TouchEvent, clip: Clip) {
++      this.isDragging = true;
++      this.dragClipId = clip.id;
++      this.dragStartX = event.touches[0].clientX;
++      this.dragOriginalStart = clip.startTime;
++      this.dragOriginalTrackType = clip.type;
++      this.stateService.selectedClipId.set(clip.id);
++  }
++
+   @HostListener('window:mousemove', ['$event'])
+   onMouseMove(event: MouseEvent) {
+       if (!this.isDragging || !this.dragClipId) return;

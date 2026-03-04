@@ -1,0 +1,12 @@
+--- ui/src/app/components/timeline/timeline.ts
++++ ui/src/app/components/timeline/timeline.ts
+@@ -81,6 +81,9 @@
+       document.body.appendChild(video);
+
+       await new Promise<void>((resolve) => {
++          if (video.readyState >= 2) {
++              resolve();
++          }
+           video.onloadeddata = () => resolve();
+           video.onerror = () => resolve();
+       });

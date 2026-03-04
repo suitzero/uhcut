@@ -202,15 +202,6 @@ export class Timeline {
       event.stopPropagation();
   }
 
-  onTouchStart(event: TouchEvent, clip: Clip) {
-      this.isDragging = true;
-      this.dragClipId = clip.id;
-      this.dragStartX = event.touches[0].clientX;
-      this.dragOriginalStart = clip.startTime;
-      this.dragOriginalTrackType = clip.type;
-      this.stateService.selectedClipId.set(clip.id);
-  }
-
   @HostListener('window:mousemove', ['$event'])
   onMouseMove(event: MouseEvent) {
       if (!this.isDragging || !this.dragClipId) return;

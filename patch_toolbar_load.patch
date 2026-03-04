@@ -1,0 +1,40 @@
+--- ui/src/app/components/toolbar/toolbar.ts
++++ ui/src/app/components/toolbar/toolbar.ts
+@@ -35,17 +35,21 @@
+           alert("Failed to load media: " + file.name);
+       };
+
++      const tempItem = {
++          id,
++          file,
++          url,
++          type,
++          name: file.name,
++          duration: 30, // temporary
++          videoWidth: 1920,
++          videoHeight: 1080
++      };
++      this.state.addMedia(tempItem);
++      this.state.addToTimelineSmart(tempItem);
++
+       element.onloadedmetadata = () => {
+-          const item = {
+-              id,
+-              file,
+-              url,
+-              type,
+-              name: file.name,
+-              duration: element.duration || 0,
+-              videoWidth: type === 'video' ? ((element as HTMLVideoElement).videoWidth || 0) : 0,
+-              videoHeight: type === 'video' ? ((element as HTMLVideoElement).videoHeight || 0) : 0
+-          };
+-          this.state.addMedia(item);
+-          this.state.addToTimelineSmart(item);
++          const duration = element.duration || 0;
++          const w = type === 'video' ? ((element as HTMLVideoElement).videoWidth || 0) : 0;
++          const h = type === 'video' ? ((element as HTMLVideoElement).videoHeight || 0) : 0;
++          this.state.updateMedia(id, { duration, videoWidth: w, videoHeight: h });
++          this.state.updateClipDurationByMediaId(id, duration);
+       };
+       element.src = url;
+   }

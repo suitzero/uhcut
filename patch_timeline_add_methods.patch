@@ -1,0 +1,34 @@
+--- ui/src/app/components/timeline/timeline.ts
++++ ui/src/app/components/timeline/timeline.ts
+@@ -148,6 +148,15 @@
+       event.stopPropagation();
+   }
+
++  onTouchStart(event: TouchEvent, clip: Clip) {
++      this.isDragging = true;
++      this.dragClipId = clip.id;
++      this.dragStartX = event.touches[0].clientX;
++      this.dragOriginalStart = clip.startTime;
++      this.dragOriginalTrackType = clip.type;
++      this.stateService.selectedClipId.set(clip.id);
++  }
++
+   @HostListener('window:mousemove', ['$event'])
+   onMouseMove(event: MouseEvent) {
+       if (!this.isDragging || !this.dragClipId) return;
+@@ -158,6 +167,16 @@
+       this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
+   }
+
++  @HostListener('window:touchmove', ['$event'])
++  onTouchMove(event: TouchEvent) {
++      if (!this.isDragging || !this.dragClipId) return;
++      const deltaPx = event.touches[0].clientX - this.dragStartX;
++      const deltaSec = deltaPx / this.zoom();
++      let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
++      this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
++  }
++
+   @HostListener('window:mouseup', ['$event'])
+   onMouseUp(event: MouseEvent) {
+       if (this.isDragging) {

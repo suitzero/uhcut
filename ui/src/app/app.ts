@@ -45,7 +45,7 @@ export class App {
   }
 
   exportVideo() {
-    console.log("Export functionality placeholder");
-    // TODO: Connect to ExportService
+    console.log("Export started...");
+    alert("Export started... (This is a placeholder for the export process)");
   }
 }

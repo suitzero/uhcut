@@ -1,0 +1,40 @@
+--- ui/src/app/components/timeline/timeline.ts
++++ ui/src/app/components/timeline/timeline.ts
+@@ -232,19 +232,23 @@
+
+       element.onerror = () => alert("Failed to load media: " + file.name);
+
++      const tempItem: MediaItem = {
++          id,
++          file,
++          url,
++          type,
++          name: file.name,
++          duration: 30,
++          videoWidth: 1920,
++          videoHeight: 1080
++      };
++      this.stateService.addMedia(tempItem);
++      this.stateService.addClipToTimeline(tempItem, startTime);
++
+       element.onloadedmetadata = () => {
+-          const item: MediaItem = {
+-              id,
+-              file,
+-              url,
+-              type,
+-              name: file.name,
+-              duration: element.duration || 0,
+-              videoWidth: type === 'video' ? ((element as HTMLVideoElement).videoWidth || 0) : 0,
+-              videoHeight: type === 'video' ? ((element as HTMLVideoElement).videoHeight || 0) : 0
+-          };
+-          this.stateService.addMedia(item);
+-          this.stateService.addClipToTimeline(item, startTime);
++          const duration = element.duration || 0;
++          const w = type === 'video' ? ((element as HTMLVideoElement).videoWidth || 0) : 0;
++          const h = type === 'video' ? ((element as HTMLVideoElement).videoHeight || 0) : 0;
++          this.stateService.updateMedia(id, { duration, videoWidth: w, videoHeight: h });
++          this.stateService.updateClipDurationByMediaId(id, duration);
+       };
+       element.src = url;
+   }

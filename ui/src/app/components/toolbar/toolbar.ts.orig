@@ -1,4 +1,4 @@
-import { Component, ElementRef, ViewChild, inject, computed, signal } from '@angular/core';
+import { Component, ElementRef, ViewChild, inject, computed } from '@angular/core';
 import { StateService } from '../../services/state';
 import { AudioService } from '../../services/audio';
 
@@ -13,10 +13,6 @@ export class Toolbar {
 
   protected state = inject(StateService);
   protected audio = inject(AudioService);
-
-  isRecording = signal(false);
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioChunks: Blob[] = [];
 
   onAddMedia() {
     this.fileInput.nativeElement.click();
@@ -116,78 +112,6 @@ export class Toolbar {
           if (clip && clip.type === 'video') {
               this.state.saveState();
               this.state.updateClip(id, { stabilized: !clip.stabilized });
-          }
-      }
-  }
-
-  async toggleRecording() {
-      if (this.isRecording()) {
-          this.mediaRecorder?.stop();
-          this.isRecording.set(false);
-      } else {
-          try {
-              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              this.audioChunks = [];
-              this.mediaRecorder = new MediaRecorder(stream);
-              this.mediaRecorder.ondataavailable = (e) => this.audioChunks.push(e.data);
-              this.mediaRecorder.onstop = () => {
-                  const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
-                  const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
-                  this.processFile(file);
-                  stream.getTracks().forEach(t => t.stop());
-              };
-              this.mediaRecorder.start();
-              this.isRecording.set(true);
-          } catch (e) {
-              alert("Microphone access denied or error: " + e);
-          }
-      }
-  }
-
-  extractAudio() {
-      const id = this.state.selectedClipId();
-      if (id) {
-          const clip = this.state.findClip(id);
-          if (clip && clip.type === 'video') {
-              this.state.saveState();
-              this.state.updateClip(id, { muted: true });
-
-              const newClip = { ...clip, id: 'clip_' + Date.now(), type: 'audio' as 'video' | 'audio', volume: 1.0, muted: false };
-              const aTracks = this.state.audioTracks();
-              const newATracks = [...aTracks];
-              newATracks[0] = [...newATracks[0], newClip];
-              this.state.audioTracks.set(newATracks);
-          }
-      }
-  }
-
-  removeSilence() {
-      const id = this.state.selectedClipId();
-      if (id) {
-          const clip = this.state.findClip(id);
-          if (clip) {
-              // Simplified silence removal: splits clip into three chunks and removes middle
-              // (Full silence removal requires heavy audio buffer processing, this is a placeholder/simplified version)
-              this.state.saveState();
-
-              // Split logic for demonstration
-              if (clip.duration > 3) {
-                 const mid = clip.duration / 2;
-                 const c1 = { ...clip, id: 'clip_' + Date.now() + 1, duration: mid - 0.5 };
-                 const c2 = { ...clip, id: 'clip_' + Date.now() + 2, startTime: clip.startTime + mid + 0.5, offset: clip.offset + mid + 0.5, duration: clip.duration - mid - 0.5 };
-
-                 if (clip.type === 'video') {
-                     this.state.videoTrack.update(t => [...t.filter(c => c.id !== id), c1, c2]);
-                 } else {
-                     const aTracks = this.state.audioTracks();
-                     this.state.audioTracks.set(aTracks.map(track => {
-                         if (track.some(c => c.id === id)) {
-                             return [...track.filter(c => c.id !== id), c1, c2];
-                         }
-                         return track;
-                     }));
-                 }
-              }
           }
       }
   }

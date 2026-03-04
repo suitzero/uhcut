@@ -1,0 +1,34 @@
+--- ui/src/app/components/timeline/timeline.ts
++++ ui/src/app/components/timeline/timeline.ts
+@@ -242,6 +242,32 @@
+           this.stateService.saveState();
+       }
+   }
++
++  @HostListener('window:touchend', ['$event'])
++  onTouchEnd(event: TouchEvent) {
++      if (this.isDragging) {
++          if (this.dragClipId && this.dragOriginalTrackType === 'audio') {
++              const rect = this.timelineTracks.nativeElement.getBoundingClientRect();
++              // event.changedTouches contains the last touch location
++              if (event.changedTouches && event.changedTouches.length > 0) {
++                  const y = event.changedTouches[0].clientY - rect.top + this.timelineTracks.nativeElement.scrollTop;
++                  let targetTrackIndex = 0;
++                  if (y > 68 + 58) {
++                      targetTrackIndex = 1;
++                  }
++                  const clip = this.stateService.findClip(this.dragClipId);
++                  if (clip) {
++                      this.stateService.moveAudioClipToTrack(this.dragClipId, targetTrackIndex, clip.startTime);
++                  }
++              }
++          }
++
++          this.isDragging = false;
++          this.dragClipId = null;
++          this.stateService.saveState();
++      }
++  }
+
+   onTimelineClick(event: MouseEvent) {
+       // If we were dragging, ignore click

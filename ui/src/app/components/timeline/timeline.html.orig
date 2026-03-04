@@ -19,8 +19,7 @@
                  [style.left.px]="clip.startTime * zoom()"
                  [style.width.px]="clip.duration * zoom()"
                  (click)="onClipClick($event, clip)"
-                 (mousedown)="onMouseDown($event, clip)"
-                 (touchstart)="onTouchStart($event, clip)">
+                 (mousedown)="onMouseDown($event, clip)">
                 <span class="clip-label">
                     @if (clip.stabilized) {
                         <span class="badge" title="Stabilized">⚡</span>
@@ -40,8 +39,7 @@
                   [style.left.px]="clip.startTime * zoom()"
                   [style.width.px]="clip.duration * zoom()"
                   (click)="onClipClick($event, clip)"
-                  (mousedown)="onMouseDown($event, clip)"
-                  (touchstart)="onTouchStart($event, clip)">
+                  (mousedown)="onMouseDown($event, clip)">
                  <span class="clip-label">{{ getMediaName(clip) }}</span>
                  <!-- Waveform Logic -->
                  <div class="clip-thumbnails" *ngIf="waveforms[clip.id]"

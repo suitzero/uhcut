@@ -1,0 +1,18 @@
+--- ui/src/app/components/timeline/timeline.ts
++++ ui/src/app/components/timeline/timeline.ts
+@@ -212,6 +212,16 @@
+       this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
+   }
+
++  @HostListener('window:touchmove', ['$event'])
++  onTouchMove(event: TouchEvent) {
++      if (!this.isDragging || !this.dragClipId) return;
++      const deltaPx = event.touches[0].clientX - this.dragStartX;
++      const deltaSec = deltaPx / this.zoom();
++      let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
++      this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
++  }
++
+   @HostListener('window:mouseup', ['$event'])
+   onMouseUp(event: MouseEvent) {
+       if (this.isDragging) {

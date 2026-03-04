@@ -1,0 +1,30 @@
+--- ui/src/app/components/toolbar/toolbar.html
++++ ui/src/app/components/toolbar/toolbar.html
+@@ -5,6 +5,10 @@
+         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+         <span>Add</span>
+     </button>
++    <button (click)="toggleRecording()" class="tool-btn" [class.active]="isRecording()" title="Record Voice">
++        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
++        <span>Record</span>
++    </button>
+     <div class="separator"></div>
+
+     <button (click)="undo()" class="tool-btn" title="Undo">
+@@ -32,6 +36,16 @@
+             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+             <span>Stabilize</span>
+         </button>
++        <button (click)="extractAudio()" class="tool-btn" title="Extract Audio">
++            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
++            <span>Extract Audio</span>
++        </button>
++    }
++    @if (selectedClipType() === 'video' || selectedClipType() === 'audio') {
++        <button (click)="removeSilence()" class="tool-btn" title="Remove Silence">
++            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm2.46-7.12l1.41-1.41L12 12.59l2.12-2.12 1.41 1.41L13.41 14l2.12 2.12-1.41 1.41L12 15.41l-2.12 2.12-1.41-1.41L10.59 14l-2.13-2.12zM15.5 4l-1-1h-5l-1 1H5v2h14V4z"/></svg>
++            <span>Rm Silence</span>
++        </button>
+     }
+
+     <div class="separator"></div>

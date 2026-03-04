@@ -1,3 +1,5 @@
+#!/bin/bash
+cat << 'INNER_EOF' > ui/src/app/components/timeline/timeline.ts
 import { Component, ElementRef, ViewChild, AfterViewInit, inject, computed, HostListener, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { StateService, Clip, MediaItem } from '../../services/state';
@@ -202,15 +204,6 @@ export class Timeline {
       event.stopPropagation();
   }
 
-  onTouchStart(event: TouchEvent, clip: Clip) {
-      this.isDragging = true;
-      this.dragClipId = clip.id;
-      this.dragStartX = event.touches[0].clientX;
-      this.dragOriginalStart = clip.startTime;
-      this.dragOriginalTrackType = clip.type;
-      this.stateService.selectedClipId.set(clip.id);
-  }
-
   @HostListener('window:mousemove', ['$event'])
   onMouseMove(event: MouseEvent) {
       if (!this.isDragging || !this.dragClipId) return;
@@ -222,15 +215,6 @@ export class Timeline {
       // We handle visual updates of time immediately via store
       // Target track resolution is handled on mouseup for simplicity and performance
       // but we update start time in real-time
-      this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
-  }
-
-  @HostListener('window:touchmove', ['$event'])
-  onTouchMove(event: TouchEvent) {
-      if (!this.isDragging || !this.dragClipId) return;
-      const deltaPx = event.touches[0].clientX - this.dragStartX;
-      const deltaSec = deltaPx / this.zoom();
-      let newStartTime = Math.max(0, this.dragOriginalStart + deltaSec);
       this.stateService.updateClip(this.dragClipId, { startTime: newStartTime });
   }
 
@@ -255,29 +239,6 @@ export class Timeline {
               }
           }
 
-          this.isDragging = false;
-          this.dragClipId = null;
-          this.stateService.saveState();
-      }
-  }
-
-  @HostListener('window:touchend', ['$event'])
-  onTouchEnd(event: TouchEvent) {
-      if (this.isDragging) {
-          if (this.dragClipId && this.dragOriginalTrackType === 'audio') {
-              const rect = this.timelineTracks.nativeElement.getBoundingClientRect();
-              if (event.changedTouches && event.changedTouches.length > 0) {
-                  const y = event.changedTouches[0].clientY - rect.top + this.timelineTracks.nativeElement.scrollTop;
-                  let targetTrackIndex = 0;
-                  if (y > 68 + 58) {
-                      targetTrackIndex = 1;
-                  }
-                  const clip = this.stateService.findClip(this.dragClipId);
-                  if (clip) {
-                      this.stateService.moveAudioClipToTrack(this.dragClipId, targetTrackIndex, clip.startTime);
-                  }
-              }
-          }
           this.isDragging = false;
           this.dragClipId = null;
           this.stateService.saveState();
@@ -414,3 +375,4 @@ export class Timeline {
       element.src = url;
   }
 }
+INNER_EOF

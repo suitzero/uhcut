@@ -1,0 +1,29 @@
+--- ui/src/app/services/state.ts
++++ ui/src/app/services/state.ts
+@@ -37,6 +37,27 @@
+     this.media.update(list => [...list, item]);
+   }
+
++  updateMedia(id: string, updates: Partial<MediaItem>) {
++    this.media.update(list => list.map(m => m.id === id ? { ...m, ...updates } : m));
++  }
++
++  updateClipDurationByMediaId(mediaId: string, duration: number) {
++      const vTrack = this.videoTrack();
++      const vIndex = vTrack.findIndex(c => c.mediaId === mediaId);
++      if (vIndex !== -1) {
++          this.updateClip(vTrack[vIndex].id, { duration });
++          return;
++      }
++      const aTracks = this.audioTracks();
++      for (let i = 0; i < aTracks.length; i++) {
++          const aIndex = aTracks[i].findIndex(c => c.mediaId === mediaId);
++          if (aIndex !== -1) {
++              this.updateClip(aTracks[i][aIndex].id, { duration });
++              return;
++          }
++      }
++  }
++
+   // Smart Add
+   addToTimelineSmart(item: MediaItem) {

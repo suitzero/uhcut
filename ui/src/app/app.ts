@@ -57,4 +57,42 @@ export class App {
       alert("Player not ready.");
     }
   }
+
+  saveExportedVideo() {
+    const url = this.state.exportUrl();
+    if (!url) return;
+
+    if (navigator.share) {
+      // Need a File object to share on some platforms
+      fetch(url)
+        .then(res => res.blob())
+        .then(blob => {
+          const file = new File([blob], 'uhcut_video.mp4', { type: 'video/mp4' });
+          if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            navigator.share({
+              files: [file],
+              title: 'UhCut Video',
+              text: 'Exported from UhCut'
+            }).catch(e => console.error("Share failed", e));
+          } else {
+            // Fallback to manual download or open
+            window.open(url, '_blank');
+          }
+        });
+    } else {
+      // Direct download link
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'uhcut_video.mp4';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  }
+
+  closeExport() {
+    this.state.isExporting.set(false);
+    this.state.exportProgress.set(0);
+    this.state.exportUrl.set(null);
+  }
 }

@@ -33,7 +33,7 @@ export class Player implements AfterViewInit {
       effect(() => {
           const time = this.state.playbackTime();
           const isPlaying = this.state.isPlaying();
-          if (!isPlaying) {
+          if (!isPlaying && this.mainVideo) {
              this.syncMedia(time, false);
           }
       });
@@ -118,7 +118,25 @@ export class Player implements AfterViewInit {
           }
           v.muted = false; // We control volume via GainNode
           v.style.opacity = '1';
-          v.style.transform = videoClip.stabilized ? 'scale(1.3)' : 'scale(1)';
+
+          let transformStr = 'scale(1)';
+          if (videoClip.stabilized) {
+              transformStr = 'scale(1.3)';
+              if (videoClip.stabilizationData) {
+                  const clipTime = time - videoClip.startTime;
+                  // Find nearest correction frame
+                  let bestCorrection = { dx: 0, dy: 0 };
+                  for (let d of videoClip.stabilizationData) {
+                      if (d.time <= clipTime) {
+                          bestCorrection = d;
+                      } else {
+                          break;
+                      }
+                  }
+                  transformStr += ` translate(${bestCorrection.dx}px, ${bestCorrection.dy}px)`;
+              }
+          }
+          v.style.transform = transformStr;
 
           if (this.state.isPlaying() && v.paused) v.play().catch(()=>{});
           if (!this.state.isPlaying() && !v.paused) v.pause();

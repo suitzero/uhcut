@@ -22,6 +22,7 @@ export interface Clip {
   muted: boolean;
   volume: number;
   stabilized?: boolean;
+  stabilizationData?: {time: number, dx: number, dy: number}[];
 }
 
 export interface Tracks {
@@ -50,6 +51,14 @@ export class StateService {
   isPlaying = signal(false);
   zoom = signal(20);
   selectedClipId = signal<string | null>(null);
+
+  // Export State
+  isExporting = signal(false);
+  exportProgress = signal(0);
+  exportUrl = signal<string | null>(null);
+
+  // Reorder Mode
+  reorderMode = signal(false);
 
   // History Stacks
   private historyStack: string[] = [];

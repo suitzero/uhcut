@@ -3,7 +3,8 @@
   <header class="top-bar">
       <div class="logo">UhCut</div>
       <div class="actions">
-          <button id="export-btn" (click)="exportVideo()">Export</button>
+          <button class="lang-btn" (click)="i18n.toggleLang()">{{ i18n.t(i18n.lang() === 'en' ? 'ko' : 'en') }}</button>
+          <button id="export-btn" (click)="exportVideo()">{{ i18n.t('export') }}</button>
       </div>
   </header>
 
@@ -23,7 +24,7 @@
   @if (state.isExporting()) {
     <div class="export-overlay">
       <div class="export-modal">
-        <h3>Exporting Video...</h3>
+        <h3>{{ i18n.t('exporting') }}</h3>
         <div class="progress-bar-container">
           <div class="progress-bar" [style.width.%]="state.exportProgress()"></div>
         </div>
@@ -31,9 +32,9 @@
 
         @if (state.exportUrl()) {
           <div class="export-actions">
-            <p>Export Complete!</p>
-            <button class="save-btn" (click)="saveExportedVideo()">Save Video</button>
-            <button class="close-btn" (click)="closeExport()">Close</button>
+            <p>{{ i18n.t('exportComplete') }}</p>
+            <button class="save-btn" (click)="saveExportedVideo()">{{ i18n.t('export') }}</button>
+            <button class="close-btn" (click)="closeExport()">{{ i18n.t('close') }}</button>
           </div>
         }
       </div>

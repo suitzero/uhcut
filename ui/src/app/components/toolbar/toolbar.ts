@@ -1,6 +1,7 @@
 import { Component, ElementRef, ViewChild, inject, computed, signal } from '@angular/core';
 import { StateService } from '../../services/state';
 import { AudioService } from '../../services/audio';
+import { I18nService } from '../../services/i18n';
 
 @Component({
   selector: 'app-toolbar',
@@ -13,10 +14,15 @@ export class Toolbar {
 
   protected state = inject(StateService);
   protected audio = inject(AudioService);
+  public i18n = inject(I18nService);
 
   isRecording = signal(false);
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
+  private recordingInterval: any = null;
+  private recordingStart: number = 0;
+  private recordingClipId: string | null = null;
+  private recordingMediaId: string | null = null;
 
   onAddMedia() {
     this.fileInput.nativeElement.click();
@@ -59,8 +65,26 @@ export class Toolbar {
       this.state.addMedia(tempItem);
       this.state.addToTimelineSmart(tempItem);
 
-      element.onloadedmetadata = () => {
-          const duration = element.duration || 0;
+      element.onloadedmetadata = async () => {
+          let duration = element.duration || 0;
+
+          // Handle WebM audio blobs missing duration
+          if (duration === Infinity || duration === 0) {
+              if (file.type.startsWith('audio') && file.name === 'recording.webm') {
+                  const buffer = await this.audio.getWaveform(url, id);
+                  if (buffer) {
+                      duration = buffer.duration;
+                  }
+              } else {
+                  // Fallback setting currentTime to force metadata load
+                  element.currentTime = 1e101;
+                  await new Promise(r => setTimeout(r, 200));
+                  duration = element.duration || 0;
+                  if (duration === Infinity || duration === 0) duration = 10; // final fallback
+                  element.currentTime = 0;
+              }
+          }
+
           const w = type === 'video' ? ((element as HTMLVideoElement).videoWidth || 0) : 0;
           const h = type === 'video' ? ((element as HTMLVideoElement).videoHeight || 0) : 0;
           this.state.updateMedia(id, { duration, videoWidth: w, videoHeight: h });
@@ -248,20 +272,106 @@ export class Toolbar {
       if (this.isRecording()) {
           this.mediaRecorder?.stop();
           this.isRecording.set(false);
+          if (this.recordingInterval) {
+              clearInterval(this.recordingInterval);
+              this.recordingInterval = null;
+          }
       } else {
           try {
               const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
               this.audioChunks = [];
               this.mediaRecorder = new MediaRecorder(stream);
+
               this.mediaRecorder.ondataavailable = (e) => this.audioChunks.push(e.data);
               this.mediaRecorder.onstop = () => {
                   const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
                   const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
-                  this.processFile(file);
+
+                  if (this.recordingClipId && this.recordingMediaId) {
+                      // Update the live clip with final metadata
+                      const url = URL.createObjectURL(file);
+                      const finalMediaId = this.recordingMediaId; // Capture scope
+                      this.state.updateMedia(finalMediaId, { file, url, _recording: false });
+
+                      const element = document.createElement('audio');
+                      element.preload = 'metadata';
+                      element.onloadedmetadata = async () => {
+                          let duration = element.duration || 0;
+                          if (duration === Infinity || duration === 0) {
+                              const buffer = await this.audio.getWaveform(url, finalMediaId);
+                              if (buffer) duration = buffer.duration;
+                          }
+                          this.state.updateMedia(finalMediaId, { duration });
+                          this.state.updateClipDurationByMediaId(finalMediaId, duration);
+                      };
+                      element.src = url;
+                      this.recordingClipId = null;
+                      this.recordingMediaId = null;
+                  } else {
+                      this.processFile(file);
+                  }
                   stream.getTracks().forEach(t => t.stop());
               };
-              this.mediaRecorder.start();
+
+              // Create temporary recording clip
+              this.recordingMediaId = Date.now() + Math.random().toString(36).substr(2, 9);
+              this.recordingClipId = 'clip_' + Date.now() + Math.random().toString(36).substr(2, 5);
+
+              const tempItem = {
+                  id: this.recordingMediaId,
+                  file: null,
+                  url: null,
+                  type: 'audio' as const,
+                  name: 'recording.webm',
+                  duration: 0.1,
+                  _recording: true
+              };
+              this.state.addMedia(tempItem);
+
+              const audioTracks = this.state.audioTracks();
+              let newAudioTracks = [...audioTracks];
+              let added = false;
+
+              const newClip = {
+                  id: this.recordingClipId,
+                  mediaId: this.recordingMediaId,
+                  duration: 0.1,
+                  offset: 0,
+                  type: 'audio' as const,
+                  muted: false,
+                  volume: 1.0,
+                  startTime: this.state.playbackTime() // Start at playhead
+              };
+
+              for (let i = 0; i < newAudioTracks.length; i++) {
+                  // Simply append to the end of the selected track if available, or first track
+                  // For realtime recording, let's just use track 0 for simplicity if it fits,
+                  // but we should avoid collisions. For now, add to track 0.
+                  const trackClips = newAudioTracks[i];
+                  newAudioTracks[i] = [...trackClips, newClip];
+                  added = true;
+                  break;
+              }
+
+              if (!added) {
+                  newAudioTracks.push([newClip]);
+              }
+              this.state.audioTracks.set(newAudioTracks);
+
+
+              this.recordingStart = Date.now();
+              this.mediaRecorder.start(100); // chunk every 100ms
               this.isRecording.set(true);
+
+              // Update duration in realtime
+              this.recordingInterval = setInterval(() => {
+                  if (this.isRecording() && this.recordingClipId && this.recordingMediaId) {
+                      const duration = (Date.now() - this.recordingStart) / 1000;
+                      this.state.updateMedia(this.recordingMediaId, { duration });
+                      this.state.updateClipDurationByMediaId(this.recordingMediaId, duration);
+                  }
+              }, 100);
+
           } catch (e) {
               alert("Microphone access denied or error: " + e);
           }
@@ -313,33 +423,31 @@ export class Toolbar {
           if (v > maxAmp) maxAmp = v;
       }
 
-      const threshold = maxAmp * 0.03; // 3% of max amplitude
-      const minSilenceLen = Math.floor(0.15 * sampleRate); // 0.15s
-      const padding = Math.floor(0.25 * sampleRate); // 0.25s
+      const threshold = maxAmp * 0.05; // 5% of max amplitude - increased to catch more breathing/background
+      const minSilenceLen = Math.floor(0.2 * sampleRate); // 0.2s minimum silence length
+      const padding = Math.floor(0.1 * sampleRate); // 0.1s padding to keep ends natural
 
       const keepRegions: {start: number, end: number}[] = [];
       let inSound = false;
       let soundStart = startSample;
       let silenceStart = 0;
+      let silenceCount = 0; // track consecutive silence samples
 
       for (let i = startSample; i < endSample; i++) {
           if (Math.abs(data[i]) > threshold) {
+              silenceCount = 0;
               if (!inSound) {
-                  // End of silence
-                  if (i - silenceStart >= minSilenceLen) {
-                      inSound = true;
-                      soundStart = Math.max(startSample, i - padding);
-                  } else {
-                      // Silence was too short, ignore
-                      inSound = true;
-                  }
+                  inSound = true;
+                  soundStart = Math.max(startSample, i - padding);
               }
           } else {
+              silenceCount++;
               if (inSound) {
-                  // Start of potential silence
-                  inSound = false;
-                  silenceStart = i;
-                  keepRegions.push({ start: soundStart, end: Math.min(endSample, i + padding) });
+                  if (silenceCount >= minSilenceLen) {
+                      inSound = false;
+                      silenceStart = i - silenceCount;
+                      keepRegions.push({ start: soundStart, end: Math.min(endSample, silenceStart + padding) });
+                  }
               }
           }
       }
@@ -348,7 +456,6 @@ export class Toolbar {
           keepRegions.push({ start: soundStart, end: endSample });
       } else if (keepRegions.length === 0) {
           // No sound found above threshold at all, maybe keep original or just remove whole clip
-          // We'll just keep it as is if we fail to detect any sound
           return;
       }
 

@@ -49,7 +49,11 @@
                       style="background-size: 100% 100%; opacity: 0.3;">
                  </div>
                  <!-- Live Recording Placeholder -->
-                 <div class="clip-thumbnails recording-pulse" *ngIf="!waveforms[clip.id] && isRecording(clip)" style="background: rgba(255,0,0,0.2);"></div>
+                 <div class="clip-thumbnails" *ngIf="!waveforms[clip.id] && isRecording(clip) && stateService.recordingWaveform()"
+                      [style.background-image]="'url(' + stateService.recordingWaveform() + ')'"
+                      style="background-size: 100% 100%; opacity: 0.5;">
+                 </div>
+                 <div class="clip-thumbnails recording-pulse" *ngIf="!waveforms[clip.id] && isRecording(clip) && !stateService.recordingWaveform()" style="background: rgba(255,0,0,0.2);"></div>
              </div>
         </div>
 

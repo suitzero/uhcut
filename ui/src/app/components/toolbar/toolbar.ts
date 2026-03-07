@@ -17,6 +17,7 @@ export class Toolbar {
   public i18n = inject(I18nService);
 
   isRecording = signal(false);
+  isStartingRecording = false;
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
   private recordingInterval: any = null;
@@ -70,7 +71,7 @@ export class Toolbar {
 
           // Handle WebM audio blobs missing duration
           if (duration === Infinity || duration === 0) {
-              if (file.type.startsWith('audio') && file.name === 'recording.webm') {
+              if (file.type.startsWith('audio') && file.name.startsWith('recording')) {
                   const buffer = await this.audio.getWaveform(url, id);
                   if (buffer) {
                       duration = buffer.duration;
@@ -269,8 +270,11 @@ export class Toolbar {
   }
 
   async toggleRecording() {
+      if (this.isStartingRecording) return;
       if (this.isRecording()) {
-          this.mediaRecorder?.stop();
+          if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+              this.mediaRecorder.stop();
+          }
           this.isRecording.set(false);
           if (this.recordingInterval) {
               clearInterval(this.recordingInterval);
@@ -278,14 +282,37 @@ export class Toolbar {
           }
       } else {
           try {
+
+              this.isStartingRecording = true;
               const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
               this.audioChunks = [];
               this.mediaRecorder = new MediaRecorder(stream);
 
+              // Setup analyser for real-time waveform
+              const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+              const source = audioCtx.createMediaStreamSource(stream);
+              const analyser = audioCtx.createAnalyser();
+              analyser.fftSize = 256;
+              source.connect(analyser);
+              const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+              const waveCanvas = document.createElement('canvas');
+              waveCanvas.width = 1000;
+              waveCanvas.height = 50;
+              const waveCtx = waveCanvas.getContext('2d');
+              let waveX = 0;
+              if (waveCtx) {
+                  waveCtx.fillStyle = '#111';
+              }
+              this.state.recordingWaveform.set(null);
+
+
               this.mediaRecorder.ondataavailable = (e) => this.audioChunks.push(e.data);
               this.mediaRecorder.onstop = () => {
-                  const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
-                  const file = new File([blob], 'recording.webm', { type: 'audio/webm' });
+                  const mime = this.mediaRecorder?.mimeType || 'audio/webm';
+                  const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+                  const blob = new Blob(this.audioChunks, { type: mime });
+                  const file = new File([blob], `recording.${ext}`, { type: mime });
 
                   if (this.recordingClipId && this.recordingMediaId) {
                       // Update the live clip with final metadata
@@ -311,6 +338,8 @@ export class Toolbar {
                       this.processFile(file);
                   }
                   stream.getTracks().forEach(t => t.stop());
+                  audioCtx.close().catch(()=>{});
+                  this.state.recordingWaveform.set(null);
               };
 
               // Create temporary recording clip
@@ -361,7 +390,9 @@ export class Toolbar {
 
               this.recordingStart = Date.now();
               this.mediaRecorder.start(100); // chunk every 100ms
+              this.isStartingRecording = false;
               this.isRecording.set(true);
+
 
               // Update duration in realtime
               this.recordingInterval = setInterval(() => {
@@ -369,11 +400,46 @@ export class Toolbar {
                       const duration = (Date.now() - this.recordingStart) / 1000;
                       this.state.updateMedia(this.recordingMediaId, { duration });
                       this.state.updateClipDurationByMediaId(this.recordingMediaId, duration);
+
+                      if (waveCtx) {
+                          analyser.getByteTimeDomainData(dataArray);
+                          let min = 255, max = 0;
+                          for(let i=0; i<dataArray.length; i++) {
+                              if (dataArray[i] < min) min = dataArray[i];
+                              if (dataArray[i] > max) max = dataArray[i];
+                          }
+                          // normalize 0-255 to -1 to +1 conceptually, but we map to height directly
+                          const heightFactor = waveCanvas.height / 255;
+                          const h = Math.max(1, (max - min) * heightFactor);
+                          const y = (waveCanvas.height - h) / 2;
+                          waveCtx.fillRect(waveX, y, 2, h); // Draw a small 2px bar
+                          waveX += 2;
+
+                          // If canvas gets full, we could resize or shift, but for typical recording 1000px * 100ms/2px = 50s before it wraps.
+                          // Let's just resize canvas if needed.
+                          if (waveX >= waveCanvas.width) {
+                              const newCanvas = document.createElement('canvas');
+                              newCanvas.width = waveCanvas.width + 500;
+                              newCanvas.height = waveCanvas.height;
+                              const newCtx = newCanvas.getContext('2d');
+                              if (newCtx) {
+                                  newCtx.fillStyle = '#111';
+                                  newCtx.drawImage(waveCanvas, 0, 0);
+                                  waveCanvas.width = newCanvas.width;
+                                  waveCanvas.height = newCanvas.height;
+                                  if(waveCtx) waveCtx.fillStyle = '#111'; // reset fill style after resize
+                                  waveCtx?.drawImage(newCanvas, 0, 0);
+                              }
+                          }
+                          this.state.recordingWaveform.set(waveCanvas.toDataURL());
+                      }
                   }
               }, 100);
 
+
           } catch (e) {
               alert("Microphone access denied or error: " + e);
+              this.isStartingRecording = false;
           }
       }
   }

@@ -5,6 +5,7 @@ import { Timeline } from './components/timeline/timeline';
 import { StateService } from './services/state';
 import { AudioService } from './services/audio';
 import { ExportService } from './services/export';
+import { I18nService } from './services/i18n';
 import { ViewChild } from '@angular/core';
 
 @Component({
@@ -21,6 +22,7 @@ export class App {
   protected state = inject(StateService);
   protected audio = inject(AudioService);
   protected exportSvc = inject(ExportService);
+  public i18n = inject(I18nService);
 
   @HostListener('window:keydown', ['$event'])
   handleKeyDown(event: KeyboardEvent) {

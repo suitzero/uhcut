@@ -413,6 +413,11 @@ export class Timeline {
       return m ? m.name : 'Missing';
   }
 
+  isRecording(clip: Clip): boolean {
+      const media = this.stateService.getMedia(clip.mediaId);
+      return media ? !!media._recording : false;
+  }
+
   onClipClick(event: MouseEvent, clip: Clip) {
       if (this.hasDragged) {
           event.stopPropagation();
@@ -501,8 +506,24 @@ export class Timeline {
       this.stateService.addMedia(tempItem);
       this.stateService.addClipToTimeline(tempItem, startTime);
 
-      element.onloadedmetadata = () => {
-          const duration = element.duration || 0;
+      element.onloadedmetadata = async () => {
+          let duration = element.duration || 0;
+
+          if (duration === Infinity || duration === 0) {
+              if (file.type.startsWith('audio') && file.name === 'recording.webm') {
+                  const buffer = await this.audioService.getWaveform(url, id);
+                  if (buffer) {
+                      duration = buffer.duration;
+                  }
+              } else {
+                  element.currentTime = 1e101;
+                  await new Promise(r => setTimeout(r, 200));
+                  duration = element.duration || 0;
+                  if (duration === Infinity || duration === 0) duration = 10;
+                  element.currentTime = 0;
+              }
+          }
+
           const w = type === 'video' ? ((element as HTMLVideoElement).videoWidth || 0) : 0;
           const h = type === 'video' ? ((element as HTMLVideoElement).videoHeight || 0) : 0;
           this.stateService.updateMedia(id, { duration, videoWidth: w, videoHeight: h });

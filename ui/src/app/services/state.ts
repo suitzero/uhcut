@@ -51,6 +51,7 @@ export class StateService {
   isPlaying = signal(false);
   zoom = signal(20);
   selectedClipId = signal<string | null>(null);
+  recordingWaveform = signal<string | null>(null);
 
   // Export State
   isExporting = signal(false);
@@ -244,7 +245,7 @@ export class StateService {
       for (let i = 0; i < aTracks.length; i++) {
           const idx = aTracks[i].findIndex(c => c.id === clipId);
           if (idx !== -1) {
-              clipToMove = { ...aTracks[i][idx], startTime: newStartTime };
+              clipToMove = { ...aTracks[i][idx], startTime: Math.max(0, newStartTime) };
               originalTrackIndex = i;
               break;
           }
@@ -256,25 +257,11 @@ export class StateService {
       const targetIndex = Math.max(0, Math.min(aTracks.length - 1, targetTrackIndex));
       const newATracks = aTracks.map(t => [...t]); // Deep copy outer array
 
-      // Check collision on target track
-      const collision = this.checkCollision(newATracks[targetIndex], clipToMove);
-
       // Remove from original
       newATracks[originalTrackIndex] = newATracks[originalTrackIndex].filter(c => c.id !== clipId);
 
-      if (collision && targetIndex !== originalTrackIndex) {
-          // If collision, maybe just update time on original track instead? Or force move?
-          // Let's just keep it on original track but update time
-          const stillCollision = this.checkCollision(newATracks[originalTrackIndex], clipToMove);
-          if (stillCollision) {
-              // Revert to pure original time?
-              clipToMove.startTime = aTracks[originalTrackIndex].find(c => c.id === clipId)!.startTime;
-          }
-          newATracks[originalTrackIndex].push(clipToMove);
-      } else {
-          // Move or just update time on target track
-          newATracks[targetIndex].push(clipToMove);
-      }
+      // Move or just update time on target track (no collision check, allow overlap naturally)
+      newATracks[targetIndex].push(clipToMove);
 
       this.audioTracks.set(newATracks);
   }

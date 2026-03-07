@@ -86,7 +86,7 @@ export class ExportService {
               const buffer = new ArrayBuffer(chunk.byteLength);
               chunk.copyTo(buffer);
               file.addSample(videoTrackId, buffer, {
-                  duration: chunk.duration,
+                  duration: chunk.duration || Math.floor(1000000 / fps),
                   dts: chunk.timestamp,
                   cts: chunk.timestamp,
                   is_sync: chunk.type === 'key'

@@ -18,6 +18,9 @@ export class Toolbar {
 
   isRecording = signal(false);
   isStartingRecording = false;
+  isStoppingRecording = false;
+  isStabilizing = signal(false);
+  stabilizationProgress = signal(0);
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
   private recordingInterval: any = null;
@@ -156,7 +159,8 @@ export class Toolbar {
       const media = this.state.getMedia(clip.mediaId);
       if (!media || !media.url) return;
 
-      alert("Computing stabilization data... This may take a few moments.");
+      this.isStabilizing.set(true);
+      this.stabilizationProgress.set(0);
 
       const video = document.createElement('video');
       video.src = media.url;
@@ -242,6 +246,10 @@ export class Toolbar {
           data.push({ time: i / fps, dx: cumDx, dy: cumDy });
           prevGray = currGray;
 
+          if (i % 5 === 0) {
+              this.stabilizationProgress.set(Math.floor(((i + 1) / totalFrames) * 100));
+          }
+
           // Yield
           await new Promise(r => setTimeout(r, 0));
       }
@@ -259,19 +267,46 @@ export class Toolbar {
       });
 
       // Calculate differential (correction to apply)
-      const correction = data.map((d, i) => ({
+      let maxAbsDx = 0;
+      let maxAbsDy = 0;
+
+      const rawCorrection = data.map((d, i) => {
+          const cDx = smoothed[i].dx - d.dx;
+          const cDy = smoothed[i].dy - d.dy;
+          if (Math.abs(cDx) > maxAbsDx) maxAbsDx = Math.abs(cDx);
+          if (Math.abs(cDy) > maxAbsDy) maxAbsDy = Math.abs(cDy);
+          return { time: d.time, dx: cDx, dy: cDy };
+      });
+
+      // Calculate required zoom to hide black edges
+      // If we move the frame by maxAbsDx/maxAbsDy, we need the scaled frame to cover that distance.
+      // (zoom - 1) / 2 * width >= maxAbsDx  =>  zoom >= 1 + 2 * maxAbsDx / width
+      const reqZoomX = video.videoWidth > 0 ? 1 + (2 * maxAbsDx / video.videoWidth) : 1;
+      const reqZoomY = video.videoHeight > 0 ? 1 + (2 * maxAbsDy / video.videoHeight) : 1;
+      let finalZoom = Math.max(reqZoomX, reqZoomY);
+
+      // Clamp max zoom to 1.5 to prevent extreme quality loss
+      finalZoom = Math.min(finalZoom, 1.5);
+
+      // Recalculate max allowed displacement for the final zoom
+      const maxAllowedDx = video.videoWidth * (finalZoom - 1) / 2;
+      const maxAllowedDy = video.videoHeight * (finalZoom - 1) / 2;
+
+      // Clamp correction values to stay within the safe margins
+      const correction = rawCorrection.map(d => ({
           time: d.time,
-          dx: smoothed[i].dx - d.dx,
-          dy: smoothed[i].dy - d.dy
+          dx: Math.max(-maxAllowedDx, Math.min(maxAllowedDx, d.dx)),
+          dy: Math.max(-maxAllowedDy, Math.min(maxAllowedDy, d.dy))
       }));
 
-      this.state.updateClip(clip.id, { stabilized: true, stabilizationData: correction });
-      alert("Stabilization complete!");
+      this.state.updateClip(clip.id, { stabilized: true, stabilizationData: correction, stabilizationZoom: finalZoom });
+      this.isStabilizing.set(false);
   }
 
   async toggleRecording() {
-      if (this.isStartingRecording) return;
+      if (this.isStartingRecording || this.isStoppingRecording) return;
       if (this.isRecording()) {
+          this.isStoppingRecording = true;
           if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
               this.mediaRecorder.stop();
           }
@@ -340,6 +375,7 @@ export class Toolbar {
                   stream.getTracks().forEach(t => t.stop());
                   audioCtx.close().catch(()=>{});
                   this.state.recordingWaveform.set(null);
+                  this.isStoppingRecording = false;
               };
 
               // Create temporary recording clip

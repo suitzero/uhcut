@@ -121,7 +121,8 @@ export class Player implements AfterViewInit {
 
           let transformStr = 'scale(1)';
           if (videoClip.stabilized) {
-              transformStr = 'scale(1.3)';
+              const zoom = videoClip.stabilizationZoom || 1.3;
+              transformStr = `scale(${zoom})`;
               if (videoClip.stabilizationData) {
                   const clipTime = time - videoClip.startTime;
                   // Find nearest correction frame

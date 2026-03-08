@@ -60,9 +60,81 @@ export class ExportService {
       let videoTrackId: number | null = null;
       let audioTrackId: number | null = null;
 
-      const mediaRecorder = new MediaRecorder(audioService.exportDest.stream, { mimeType: 'audio/webm;codecs=opus' });
-      const audioChunks: Blob[] = [];
-      mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+      // Audio setup using AudioEncoder and ScriptProcessor
+      const audioSampleRate = 48000;
+      const initAudio = {
+          output: (chunk: EncodedAudioChunk, config?: EncodedAudioChunkMetadata) => {
+              if (audioTrackId === null && config && config.decoderConfig) {
+                  audioTrackId = file.addTrack({
+                      timescale: 1000000,
+                      media_duration: 0,
+                      samplerate: audioSampleRate,
+                      channel_count: 2,
+                      hdlr: 'soun',
+                      type: 'mp4a'
+                  });
+              }
+              if (audioTrackId !== null) {
+                  const buffer = new ArrayBuffer(chunk.byteLength);
+                  chunk.copyTo(buffer);
+                  file.addSample(audioTrackId, buffer, {
+                      duration: chunk.duration || 0,
+                      dts: chunk.timestamp,
+                      cts: chunk.timestamp,
+                      is_sync: true
+                  });
+              }
+          },
+          error: (e: Error) => {
+              console.error("Audio Encoder Error:", e);
+          }
+      };
+
+      const audioEncoder = new (window as any).AudioEncoder(initAudio);
+      audioEncoder.configure({
+          codec: 'mp4a.40.2',
+          sampleRate: audioSampleRate,
+          numberOfChannels: 2,
+          bitrate: 128000
+      });
+
+      // We need to capture audio from the destination node.
+      const bufferSize = 4096;
+      let audioTimestamp = 0;
+      // createScriptProcessor is deprecated but still supported in many browsers.
+      // AudioWorklet is better but harder to set up dynamically here.
+      const scriptProcessor = audioService.audioCtx.createScriptProcessor(bufferSize, 2, 2);
+      scriptProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
+          if (!stateService.isExporting()) return;
+          const inputBuffer = e.inputBuffer;
+          // Create an AudioData object from the input buffer
+          // We need to construct planar data for AudioData
+          const numberOfChannels = inputBuffer.numberOfChannels;
+          const length = inputBuffer.length;
+          const sampleRate = inputBuffer.sampleRate;
+          const format = 'f32-planar';
+          const buffer = new Float32Array(length * numberOfChannels);
+          for (let c = 0; c < numberOfChannels; c++) {
+              buffer.set(inputBuffer.getChannelData(c), c * length);
+          }
+
+          const audioData = new (window as any).AudioData({
+              format: format,
+              sampleRate: sampleRate,
+              numberOfFrames: length,
+              numberOfChannels: numberOfChannels,
+              timestamp: audioTimestamp,
+              data: buffer
+          });
+
+          audioEncoder.encode(audioData);
+          audioData.close();
+          audioTimestamp += (length / sampleRate) * 1000000;
+      };
+
+      audioService.masterGain.connect(scriptProcessor);
+      scriptProcessor.connect(audioService.audioCtx.destination);
+
 
       const canvas = document.createElement('canvas');
       canvas.width = width;
@@ -109,8 +181,6 @@ export class ExportService {
       });
 
       // Start processing
-      mediaRecorder.start();
-
       let frameCount = 0;
       stateService.playbackTime.set(0);
       stateService.isPlaying.set(false);
@@ -169,8 +239,9 @@ export class ExportService {
               });
 
               if (videoClip.stabilized) {
-                  const cropW = width / 1.3;
-                  const cropH = height / 1.3;
+                  const zoom = videoClip.stabilizationZoom || 1.3;
+                  const cropW = width / zoom;
+                  const cropH = height / zoom;
                   let sx = (width - cropW) / 2;
                   let sy = (height - cropH) / 2;
 
@@ -218,12 +289,10 @@ export class ExportService {
       }
 
       await encoder.flush();
-      mediaRecorder.stop();
+      await audioEncoder.flush();
 
-      await new Promise<void>(res => {
-          mediaRecorder.onstop = () => res();
-          setTimeout(res, 1000);
-      });
+      scriptProcessor.disconnect();
+      audioService.masterGain.disconnect(scriptProcessor);
 
       stateService.exportProgress.set(100);
 

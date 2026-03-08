@@ -23,6 +23,7 @@ export interface Clip {
   volume: number;
   stabilized?: boolean;
   stabilizationData?: {time: number, dx: number, dy: number}[];
+  stabilizationZoom?: number;
 }
 
 export interface Tracks {

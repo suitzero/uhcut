@@ -27,7 +27,8 @@ export class I18nService {
       ko: '한국어',
       exporting: 'Exporting Video...',
       exportComplete: 'Export Complete!',
-      close: 'Close'
+      close: 'Close',
+      stabilizing: 'Stabilizing'
     },
     ko: {
       add: '추가',
@@ -49,7 +50,8 @@ export class I18nService {
       ko: '한국어',
       exporting: '비디오 저장 중...',
       exportComplete: '저장 완료!',
-      close: '닫기'
+      close: '닫기',
+      stabilizing: '안정화 중'
     }
   };
 

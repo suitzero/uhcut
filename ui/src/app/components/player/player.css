@@ -30,6 +30,34 @@
     min-height: 0;
 }
 
+.caption-overlay {
+    position: absolute;
+    bottom: 20px;
+    left: 10%;
+    right: 10%;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.6);
+    color: white;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 1.2rem;
+    font-weight: bold;
+    text-shadow: 1px 1px 2px black;
+    pointer-events: none;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+}
+
+.caption-overlay span {
+    transition: color 0.1s ease-in-out;
+}
+
+.caption-overlay span.highlight {
+    color: #ffeb3b; /* Yellow for highlight */
+}
+
 #main-video {
     max-width: 100%;
     max-height: 100%;

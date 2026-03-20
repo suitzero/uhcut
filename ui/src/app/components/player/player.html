@@ -1,7 +1,13 @@
 <div class="preview-area">
     <div class="video-container">
         <video #mainVideo playsinline></video>
-        <!-- Overlay canvas removed for now, can be added later -->
+        @if (activeCaption()) {
+            <div class="caption-overlay">
+                @for (word of activeCaptionWords(); track $index) {
+                    <span [class.highlight]="word.highlighted">{{ word.text }}</span>
+                }
+            </div>
+        }
     </div>
     <div class="playback-controls">
         <button (click)="togglePlay()" class="tool-btn">

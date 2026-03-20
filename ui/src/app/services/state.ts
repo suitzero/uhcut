@@ -26,6 +26,13 @@ export interface Clip {
   stabilizationZoom?: number;
 }
 
+export interface Caption {
+  id: string;
+  text: string;
+  startTime: number;
+  endTime: number;
+}
+
 export interface Tracks {
   video: Clip[];
   audio: Clip[][];
@@ -34,6 +41,7 @@ export interface Tracks {
 export interface AppState {
   media: MediaItem[];
   tracks: Tracks;
+  captions: Caption[];
   playbackTime: number;
   isPlaying: boolean;
   zoom: number;
@@ -48,6 +56,7 @@ export class StateService {
   media = signal<MediaItem[]>([]);
   videoTrack = signal<Clip[]>([]);
   audioTracks = signal<Clip[][]>([[], []]); // Two audio channels
+  captions = signal<Caption[]>([]);
   playbackTime = signal(0);
   isPlaying = signal(false);
   zoom = signal(20);
@@ -349,7 +358,8 @@ export class StateService {
           audioTracks: this.audioTracks(),
           selectedClipId: this.selectedClipId(),
           playbackTime: this.playbackTime(),
-          zoom: this.zoom()
+          zoom: this.zoom(),
+          captions: this.captions()
       });
 
       if (this.historyStack.length > 0 && this.historyStack[this.historyStack.length - 1] === snapshot) return;
@@ -368,7 +378,8 @@ export class StateService {
           audioTracks: this.audioTracks(),
           selectedClipId: this.selectedClipId(),
           playbackTime: this.playbackTime(),
-          zoom: this.zoom()
+          zoom: this.zoom(),
+          captions: this.captions()
       });
       this.redoStack.push(currentSnapshot);
 
@@ -385,7 +396,8 @@ export class StateService {
           audioTracks: this.audioTracks(),
           selectedClipId: this.selectedClipId(),
           playbackTime: this.playbackTime(),
-          zoom: this.zoom()
+          zoom: this.zoom(),
+          captions: this.captions()
       });
       this.historyStack.push(currentSnapshot);
 
@@ -399,5 +411,6 @@ export class StateService {
       this.selectedClipId.set(snapshot.selectedClipId);
       this.playbackTime.set(snapshot.playbackTime);
       this.zoom.set(snapshot.zoom);
+      this.captions.set(snapshot.captions || []);
   }
 }

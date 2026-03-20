@@ -28,6 +28,30 @@ export class Player implements AfterViewInit {
       return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
   });
 
+  activeCaption = computed(() => {
+      const time = this.state.playbackTime();
+      return this.state.captions().find(c => time >= c.startTime && time <= c.endTime);
+  });
+
+  activeCaptionWords = computed(() => {
+      const caption = this.activeCaption();
+      if (!caption) return [];
+      const time = this.state.playbackTime();
+
+      const words = caption.text.split(/\s+/).filter(w => w.length > 0);
+      const duration = caption.endTime - caption.startTime;
+      const wordDuration = duration / words.length;
+
+      return words.map((text, index) => {
+          const wordStartTime = caption.startTime + (index * wordDuration);
+          const isHighlighted = time >= wordStartTime;
+          return {
+              text: text + ' ',
+              highlighted: isHighlighted
+          };
+      });
+  });
+
   constructor() {
       // Effect to handle seeking when paused
       effect(() => {

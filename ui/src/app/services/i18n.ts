@@ -28,7 +28,8 @@ export class I18nService {
       exporting: 'Exporting Video...',
       exportComplete: 'Export Complete!',
       close: 'Close',
-      stabilizing: 'Stabilizing'
+      stabilizing: 'Stabilizing',
+      caption: 'Caption'
     },
     ko: {
       add: '추가',
@@ -51,7 +52,8 @@ export class I18nService {
       exporting: '비디오 저장 중...',
       exportComplete: '저장 완료!',
       close: '닫기',
-      stabilizing: '안정화 중'
+      stabilizing: '안정화 중',
+      caption: '자막'
     }
   };
 

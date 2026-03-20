@@ -21,6 +21,9 @@ export class Toolbar {
   isStoppingRecording = false;
   isStabilizing = signal(false);
   stabilizationProgress = signal(0);
+
+  // Caption / Transcription state
+  isTranscribing = signal(false);
   private mediaRecorder: MediaRecorder | null = null;
   private audioChunks: Blob[] = [];
   private recordingInterval: any = null;
@@ -494,6 +497,76 @@ export class Toolbar {
               newATracks[0] = [...newATracks[0], newClip];
               this.state.audioTracks.set(newATracks);
           }
+      }
+  }
+
+  async toggleTranscribe() {
+      if (this.isTranscribing()) return;
+
+      const clipId = this.state.selectedClipId();
+      if (!clipId) {
+          alert("Please select an audio or video clip to transcribe.");
+          return;
+      }
+      const clip = this.state.findClip(clipId);
+      if (!clip) return;
+      const media = this.state.getMedia(clip.mediaId);
+      if (!media || !media.url) return;
+
+      this.isTranscribing.set(true);
+
+      try {
+          // Dynamic import to avoid heavy load on initial startup
+          const { pipeline, env } = await import('@xenova/transformers');
+
+          // Disable local models
+          env.allowLocalModels = false;
+
+          // Use a tiny whisper model for speed in the browser
+          const transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en');
+
+          // Fetch the audio buffer
+          const buffer = await this.audio.getWaveform(media.url, media.id);
+          if (!buffer) {
+             throw new Error("Could not get audio data.");
+          }
+
+          const audioData = buffer.getChannelData(0);
+
+          // Create an AudioBuffer-like object that the pipeline expects
+          // OR simply pass the raw Float32Array and sample rate
+          // Transformers.js pipeline expects audio to be 16kHz
+          const offlineCtx = new OfflineAudioContext(1, audioData.length * (16000 / buffer.sampleRate), 16000);
+          const source = offlineCtx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(offlineCtx.destination);
+          source.start();
+          const resampled = await offlineCtx.startRendering();
+          const resampledData = resampled.getChannelData(0);
+
+          // Transcribe with return_timestamps
+          const output = await transcriber(resampledData, { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true });
+
+          if (output.chunks && output.chunks.length > 0) {
+              this.state.saveState();
+
+              const newCaptions = output.chunks.map((chunk: any) => {
+                  return {
+                      id: 'cap_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                      text: chunk.text.trim(),
+                      startTime: clip.startTime + chunk.timestamp[0],
+                      endTime: chunk.timestamp[1] !== null ? clip.startTime + chunk.timestamp[1] : clip.startTime + chunk.timestamp[0] + 2
+                  };
+              });
+
+              this.state.captions.update(caps => [...caps, ...newCaptions]);
+          }
+
+      } catch (error) {
+          console.error("Transcription error:", error);
+          alert("Failed to transcribe. See console for details.");
+      } finally {
+          this.isTranscribing.set(false);
       }
   }
 

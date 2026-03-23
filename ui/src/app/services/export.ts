@@ -291,8 +291,12 @@ export class ExportService {
       await encoder.flush();
       await audioEncoder.flush();
 
-      scriptProcessor.disconnect();
-      audioService.masterGain.disconnect(scriptProcessor);
+      try {
+          scriptProcessor.disconnect();
+      } catch(e) {}
+      try {
+          audioService.masterGain.disconnect(scriptProcessor);
+      } catch(e) {}
 
       stateService.exportProgress.set(100);
 

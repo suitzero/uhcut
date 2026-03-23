@@ -9,7 +9,8 @@ export class I18nService {
   private translations = {
     en: {
       add: 'Add',
-      record: 'Record',
+      record: 'Voice',
+      recordVideo: 'Video',
       undo: 'Undo',
       redo: 'Redo',
       split: 'Split',
@@ -33,7 +34,8 @@ export class I18nService {
     },
     ko: {
       add: '추가',
-      record: '녹음',
+      record: '음성녹음',
+      recordVideo: '영상녹화',
       undo: '실행 취소',
       redo: '다시 실행',
       split: '분할',

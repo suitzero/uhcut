@@ -19,6 +19,14 @@ export class Toolbar {
   isRecording = signal(false);
   isStartingRecording = false;
   isStoppingRecording = false;
+
+  isVideoRecording = signal(false);
+  private videoMediaRecorder: MediaRecorder | null = null;
+  private videoChunks: Blob[] = [];
+  private videoRecordingInterval: any = null;
+  private videoRecordingStart: number = 0;
+  private videoRecordingClipId: string | null = null;
+  private videoRecordingMediaId: string | null = null;
   isStabilizing = signal(false);
   stabilizationProgress = signal(0);
 
@@ -108,6 +116,128 @@ export class Toolbar {
           // Ideally Player component reacts to isPlaying signal.
       } else {
           this.audio.resumeContext();
+      }
+  }
+
+  async toggleVideoRecording() {
+      if (this.isStartingRecording || this.isStoppingRecording) return;
+      if (this.isVideoRecording()) {
+          this.isStoppingRecording = true;
+          if (this.videoMediaRecorder && this.videoMediaRecorder.state !== 'inactive') {
+              this.videoMediaRecorder.stop();
+          }
+          this.isVideoRecording.set(false);
+          if (this.videoRecordingInterval) {
+              clearInterval(this.videoRecordingInterval);
+              this.videoRecordingInterval = null;
+          }
+      } else {
+          try {
+              this.isStartingRecording = true;
+              const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+              this.videoChunks = [];
+              this.videoMediaRecorder = new MediaRecorder(stream);
+
+              this.videoMediaRecorder.ondataavailable = (e) => this.videoChunks.push(e.data);
+              this.videoMediaRecorder.onstop = () => {
+                  const mime = this.videoMediaRecorder?.mimeType || 'video/webm';
+                  const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+                  const blob = new Blob(this.videoChunks, { type: mime });
+                  const file = new File([blob], `recording.${ext}`, { type: mime });
+
+                  if (this.videoRecordingClipId && this.videoRecordingMediaId) {
+                      const url = URL.createObjectURL(file);
+                      const finalMediaId = this.videoRecordingMediaId;
+                      this.state.updateMedia(finalMediaId, { file, url, _recording: false });
+
+                      const element = document.createElement('video');
+                      element.preload = 'metadata';
+                      element.onloadedmetadata = async () => {
+                          let duration = element.duration || 0;
+                          if (duration === Infinity || duration === 0) {
+                              element.currentTime = 1e101;
+                              await new Promise(r => setTimeout(r, 200));
+                              duration = element.duration || 0;
+                              if (duration === Infinity || duration === 0) duration = 10;
+                              element.currentTime = 0;
+                          }
+                          const w = element.videoWidth || 1920;
+                          const h = element.videoHeight || 1080;
+                          this.state.updateMedia(finalMediaId, { duration, videoWidth: w, videoHeight: h });
+                          this.state.updateClipDurationByMediaId(finalMediaId, duration);
+                      };
+                      element.src = url;
+                      this.videoRecordingClipId = null;
+                      this.videoRecordingMediaId = null;
+                  } else {
+                      this.processFile(file);
+                  }
+                  stream.getTracks().forEach(t => t.stop());
+                  this.isStoppingRecording = false;
+              };
+
+              this.videoRecordingMediaId = Date.now() + Math.random().toString(36).substr(2, 9);
+              this.videoRecordingClipId = 'clip_' + Date.now() + Math.random().toString(36).substr(2, 5);
+
+              const tempItem = {
+                  id: this.videoRecordingMediaId,
+                  file: null,
+                  url: null,
+                  type: 'video' as const,
+                  name: 'recording.webm',
+                  duration: 0.1,
+                  videoWidth: 1920,
+                  videoHeight: 1080,
+                  _recording: true
+              };
+              this.state.addMedia(tempItem);
+
+              const newClip = {
+                  id: this.videoRecordingClipId,
+                  mediaId: this.videoRecordingMediaId,
+                  duration: 0.1,
+                  offset: 0,
+                  type: 'video' as const,
+                  muted: false,
+                  volume: 1.0,
+                  startTime: this.state.playbackTime()
+              };
+
+              // Insert clip at playhead using similar logic as smart add / add clip
+              const videoClips = this.state.videoTrack();
+              let collision = videoClips.some(c => newClip.startTime < c.startTime + c.duration && newClip.startTime + newClip.duration > c.startTime);
+              if (collision) {
+                   const lastClip = videoClips.length > 0 ? videoClips.reduce((a, b) => (a.startTime + a.duration > b.startTime + b.duration ? a : b)) : null;
+                   newClip.startTime = lastClip ? lastClip.startTime + lastClip.duration : 0;
+              }
+
+              this.state.videoTrack.update(tracks => [...tracks, newClip]);
+              this.state.repackVideoTrack();
+
+              this.videoRecordingStart = Date.now();
+              // To provide a smooth live preview, we could set a URL right away?
+              // `MediaStream` can be set to a temporary video element or player, but currently the player expects a URL.
+              // We can create a blob URL from the stream directly? No, createObjectURL for MediaStream is deprecated.
+              // We'll let the user see a "recording" placeholder and update the duration real-time.
+              // If we want real-time preview, we'd need to send the MediaStream to the Player component.
+              // For now, it will just show a placeholder thumbnail or black box in the player.
+
+              this.videoMediaRecorder.start(100);
+              this.isStartingRecording = false;
+              this.isVideoRecording.set(true);
+
+              this.videoRecordingInterval = setInterval(() => {
+                  if (this.isVideoRecording() && this.videoRecordingClipId && this.videoRecordingMediaId) {
+                      const duration = (Date.now() - this.videoRecordingStart) / 1000;
+                      this.state.updateMedia(this.videoRecordingMediaId, { duration });
+                      this.state.updateClipDurationByMediaId(this.videoRecordingMediaId, duration);
+                  }
+              }, 100);
+
+          } catch (e) {
+              alert("Camera/Microphone access denied or error: " + e);
+              this.isStartingRecording = false;
+          }
       }
   }
 
@@ -545,7 +675,7 @@ export class Toolbar {
           const resampledData = resampled.getChannelData(0);
 
           // Transcribe with return_timestamps
-          const output = await transcriber(resampledData, { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true });
+          const output = await transcriber(resampledData, { chunk_length_s: 30, stride_length_s: 5, return_timestamps: true }) as any;
 
           if (output.chunks && output.chunks.length > 0) {
               this.state.saveState();

@@ -9,6 +9,10 @@
         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
         <span>{{ i18n.t('record') }}</span>
     </button>
+    <button (click)="toggleVideoRecording()" class="tool-btn" [class.active]="isVideoRecording()" [title]="i18n.t('recordVideo')">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+        <span>{{ i18n.t('recordVideo') }}</span>
+    </button>
     <button (click)="toggleTranscribe()" class="tool-btn" [class.active]="isTranscribing()" [title]="i18n.t('caption')">
         <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-9 12H6v-2h5v2zm4-4H6v-2h9v2zm4-4H6V6h13v2z"/></svg>
         <span>{{ i18n.t('caption') }}</span>

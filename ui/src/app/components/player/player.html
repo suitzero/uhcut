@@ -1,6 +1,7 @@
 <div class="preview-area">
     <div class="video-container">
         <video #mainVideo playsinline></video>
+        <canvas #overlayCanvas class="overlay-canvas"></canvas>
         @if (activeCaption()) {
             <div class="caption-overlay">
                 @for (word of activeCaptionWords(); track $index) {

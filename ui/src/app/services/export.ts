@@ -1,11 +1,36 @@
 import { Injectable } from '@angular/core';
+import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 
 @Injectable({
   providedIn: 'root'
 })
 export class ExportService {
+  private faceDetector: FaceDetector | null = null;
+  private ballImage: HTMLImageElement | null = null;
 
   constructor() { }
+
+  private async initFaceDetector() {
+      if (this.faceDetector) return;
+      try {
+          const vision = await FilesetResolver.forVisionTasks(
+              "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm"
+          );
+          this.faceDetector = await FaceDetector.createFromOptions(vision, {
+              baseOptions: {
+                  modelAssetPath: "/models/blaze_face_short_range.tflite",
+                  delegate: "GPU"
+              },
+              runningMode: "IMAGE"
+          });
+
+          this.ballImage = new Image();
+          this.ballImage.src = '/assets/tongki.jpeg';
+          await new Promise(r => this.ballImage!.onload = r);
+      } catch (error) {
+          console.error("Failed to initialize Face Detector for Export", error);
+      }
+  }
 
   async exportVideo(
     stateService: any,
@@ -13,6 +38,8 @@ export class ExportService {
     videoElement: HTMLVideoElement
   ): Promise<void> {
     try {
+      await this.initFaceDetector();
+
       const vTrack = stateService.videoTrack();
       const aTracks = stateService.audioTracks();
 
@@ -238,8 +265,14 @@ export class ExportService {
                   setTimeout(() => { videoElement.removeEventListener('seeked', onSeeked); res(); }, 500);
               });
 
+              ctx.save();
+
+              let dx = 0;
+              let dy = 0;
+              let zoom = 1;
+
               if (videoClip.stabilized) {
-                  const zoom = videoClip.stabilizationZoom || 1.3;
+                  zoom = videoClip.stabilizationZoom || 1.3;
                   const cropW = width / zoom;
                   const cropH = height / zoom;
                   let sx = (width - cropW) / 2;
@@ -257,14 +290,56 @@ export class ExportService {
                       }
                       // Apply inverse of translation to source crop to simulate moving the camera
                       // The CSS translate moves the video, which means the crop window should move in opposite direction
-                      sx -= bestCorrection.dx;
-                      sy -= bestCorrection.dy;
+                      dx = bestCorrection.dx;
+                      dy = bestCorrection.dy;
+                      sx -= dx;
+                      sy -= dy;
                   }
 
                   ctx.drawImage(videoElement, sx, sy, cropW, cropH, 0, 0, width, height);
               } else {
                   ctx.drawImage(videoElement, 0, 0, width, height);
               }
+
+              // Run Face Detection on the exported canvas frame if available
+              if (this.faceDetector && this.ballImage) {
+                  try {
+                      // Note: We run it on canvas to detect faces as they are rendered (including stabilization)
+                      // However, Mediapipe detect expects Image/Video/Canvas.
+                      const detections = this.faceDetector.detect(canvas).detections;
+
+                      for (const detection of detections) {
+                          const bb = detection.boundingBox;
+                          if (!bb) continue;
+
+                          // The coordinates returned by Image mode are relative to the canvas size
+                          const x = bb.originX;
+                          const y = bb.originY;
+                          const w = bb.width;
+                          const h = bb.height;
+
+                          // Enlarge the ball slightly
+                          const paddingX = w * 0.2;
+                          const paddingY = h * 0.4;
+                          const ballX = x - paddingX;
+                          const ballY = y - paddingY;
+                          const ballW = w + (paddingX * 2);
+                          const ballH = h + (paddingY * 2);
+
+                          ctx.save();
+                          ctx.beginPath();
+                          ctx.arc(ballX + ballW / 2, ballY + ballH / 2, Math.max(ballW, ballH) / 2, 0, Math.PI * 2);
+                          ctx.closePath();
+                          ctx.clip();
+                          ctx.drawImage(this.ballImage, ballX, ballY, ballW, ballH);
+                          ctx.restore();
+                      }
+                  } catch (e) {
+                      // Ignore detector error for frame
+                  }
+              }
+
+              ctx.restore();
           }
 
           // We must wait a tiny bit to let audio context process, but since it's real time for audio,

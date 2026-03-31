@@ -30,6 +30,21 @@
             ],
             "styles": [
               "src/styles.css"
+            ],
+            "allowedCommonJsDependencies": [
+              "@mediapipe/tasks-vision"
+            ],
+            "externalDependencies": [
+              "fs",
+              "path",
+              "os",
+              "crypto",
+              "stream",
+              "util",
+              "child_process",
+              "events",
+              "onnxruntime-node",
+              "sharp"
             ]
           },
           "configurations": {

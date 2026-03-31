@@ -1,6 +1,7 @@
-import { Component, ElementRef, ViewChild, AfterViewInit, inject, effect, Signal, computed } from '@angular/core';
+import { Component, ElementRef, ViewChild, AfterViewInit, inject, effect, Signal, computed, OnDestroy } from '@angular/core';
 import { StateService, Clip } from '../../services/state';
 import { AudioService } from '../../services/audio';
+import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 
 @Component({
   selector: 'app-player',
@@ -8,8 +9,9 @@ import { AudioService } from '../../services/audio';
   templateUrl: './player.html',
   styleUrl: './player.css'
 })
-export class Player implements AfterViewInit {
+export class Player implements AfterViewInit, OnDestroy {
   @ViewChild('mainVideo') mainVideo!: ElementRef<HTMLVideoElement>;
+  @ViewChild('overlayCanvas') overlayCanvas!: ElementRef<HTMLCanvasElement>;
 
   protected state = inject(StateService);
   protected audio = inject(AudioService);
@@ -18,6 +20,11 @@ export class Player implements AfterViewInit {
   private animationFrameId = 0;
   private mainVideoSource: MediaElementAudioSourceNode | null = null;
   private mainVideoGain: GainNode | null = null;
+
+  // Face Detection State
+  private faceDetector: FaceDetector | null = null;
+  private isFaceDetectorReady = false;
+  private ballImage: HTMLImageElement;
 
   // Computed state for UI
   formattedTime = computed(() => {
@@ -54,6 +61,9 @@ export class Player implements AfterViewInit {
 
   constructor() {
       // Effect to handle seeking when paused
+      this.ballImage = new Image();
+      this.ballImage.src = '/assets/tongki.jpeg';
+
       effect(() => {
           const time = this.state.playbackTime();
           const isPlaying = this.state.isPlaying();
@@ -63,9 +73,38 @@ export class Player implements AfterViewInit {
       });
   }
 
-  ngAfterViewInit() {
+  async ngAfterViewInit() {
+      await this.initFaceDetector();
       // Start render loop
       this.renderLoop(0);
+  }
+
+  ngOnDestroy() {
+      if (this.animationFrameId) {
+          cancelAnimationFrame(this.animationFrameId);
+      }
+      if (this.faceDetector) {
+          this.faceDetector.close();
+      }
+  }
+
+  private async initFaceDetector() {
+      try {
+          const vision = await FilesetResolver.forVisionTasks(
+              "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.34/wasm"
+          );
+          this.faceDetector = await FaceDetector.createFromOptions(vision, {
+              baseOptions: {
+                  modelAssetPath: "/models/blaze_face_short_range.tflite",
+                  delegate: "GPU"
+              },
+              runningMode: "VIDEO"
+          });
+          this.isFaceDetectorReady = true;
+          console.log("Face detector initialized");
+      } catch (error) {
+          console.error("Failed to initialize Face Detector", error);
+      }
   }
 
   togglePlay() {
@@ -166,8 +205,12 @@ export class Player implements AfterViewInit {
           if (this.state.isPlaying() && v.paused) v.play().catch(()=>{});
           if (!this.state.isPlaying() && !v.paused) v.pause();
 
+          // Overlay processing
+          this.drawOverlay(v, videoClip);
+
       } else {
           v.style.opacity = '0';
+          this.clearOverlay();
           if (this.mainVideoGain) this.mainVideoGain.gain.value = 0;
           v.pause();
       }
@@ -185,6 +228,122 @@ export class Player implements AfterViewInit {
                this.audio.playAudio(clip.id, media.url, clip.startTime, clip.offset, clip.volume, clip.muted, time);
            }
       });
+  }
+
+  private clearOverlay() {
+      if (this.overlayCanvas) {
+          const canvas = this.overlayCanvas.nativeElement;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+             ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+      }
+  }
+
+  private drawOverlay(video: HTMLVideoElement, clip: Clip) {
+      if (!this.isFaceDetectorReady || !this.faceDetector || !this.overlayCanvas) return;
+      if (video.readyState < 2 || video.videoWidth === 0) return;
+
+      const canvas = this.overlayCanvas.nativeElement;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Make canvas match video element's displayed size
+      const rect = video.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // We need to pass the video time as timestamp
+      const startTimeMs = performance.now();
+
+      try {
+          const detections = this.faceDetector.detectForVideo(video, startTimeMs).detections;
+
+          // The video element might be letterboxed (object-fit: contain)
+          // We need to calculate the actual drawn video dimensions to map coordinates correctly.
+          const videoAspect = video.videoWidth / video.videoHeight;
+          const canvasAspect = canvas.width / canvas.height;
+
+          let drawWidth, drawHeight, drawX, drawY;
+
+          if (canvasAspect > videoAspect) {
+              // Canvas is wider than video (pillarbox)
+              drawHeight = canvas.height;
+              drawWidth = drawHeight * videoAspect;
+              drawX = (canvas.width - drawWidth) / 2;
+              drawY = 0;
+          } else {
+              // Canvas is taller than video (letterbox)
+              drawWidth = canvas.width;
+              drawHeight = drawWidth / videoAspect;
+              drawX = 0;
+              drawY = (canvas.height - drawHeight) / 2;
+          }
+
+          // Apply stabilization transform to the canvas context to match the video element's transform
+          ctx.save();
+          if (clip.stabilized) {
+              const zoom = clip.stabilizationZoom || 1.3;
+              let dx = 0;
+              let dy = 0;
+              if (clip.stabilizationData) {
+                  const clipTime = this.state.playbackTime() - clip.startTime;
+                  for (let d of clip.stabilizationData) {
+                      if (d.time <= clipTime) {
+                          dx = d.dx;
+                          dy = d.dy;
+                      } else {
+                          break;
+                      }
+                  }
+              }
+              // The translation in CSS is in pixels relative to the unscaled element.
+              // Center origin, scale, translate, uncenter.
+              ctx.translate(canvas.width / 2, canvas.height / 2);
+              ctx.scale(zoom, zoom);
+              ctx.translate(-canvas.width / 2, -canvas.height / 2);
+              ctx.translate(dx, dy);
+          }
+
+          for (const detection of detections) {
+              const bb = detection.boundingBox;
+              if (!bb) continue;
+
+              // boundingBox coordinates are relative to the original video width/height
+              const x = drawX + (bb.originX / video.videoWidth) * drawWidth;
+              const y = drawY + (bb.originY / video.videoHeight) * drawHeight;
+              const w = (bb.width / video.videoWidth) * drawWidth;
+              const h = (bb.height / video.videoHeight) * drawHeight;
+
+              // Enlarge the ball slightly to cover the whole head
+              const paddingX = w * 0.2;
+              const paddingY = h * 0.4;
+              const ballX = x - paddingX;
+              const ballY = y - paddingY;
+              const ballW = w + (paddingX * 2);
+              const ballH = h + (paddingY * 2);
+
+              if (this.ballImage.complete) {
+                  // Draw the image as a circle mask
+                  ctx.save();
+                  ctx.beginPath();
+                  ctx.arc(ballX + ballW / 2, ballY + ballH / 2, Math.max(ballW, ballH) / 2, 0, Math.PI * 2);
+                  ctx.closePath();
+                  ctx.clip();
+                  ctx.drawImage(this.ballImage, ballX, ballY, ballW, ballH);
+                  ctx.restore();
+              }
+          }
+
+          ctx.restore();
+
+      } catch (e) {
+          // Ignore occasional detector errors
+      }
   }
 
   private getVideoClipAtTime(time: number): Clip | undefined {

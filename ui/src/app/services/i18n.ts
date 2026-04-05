@@ -30,7 +30,8 @@ export class I18nService {
       exportComplete: 'Export Complete!',
       close: 'Close',
       stabilizing: 'Stabilizing',
-      caption: 'Caption'
+      caption: 'Caption',
+      studioQuality: 'Studio Quality'
     },
     ko: {
       add: '추가',
@@ -55,7 +56,8 @@ export class I18nService {
       exportComplete: '저장 완료!',
       close: '닫기',
       stabilizing: '안정화 중',
-      caption: '자막'
+      caption: '자막',
+      studioQuality: '스튜디오 음질'
     }
   };
 

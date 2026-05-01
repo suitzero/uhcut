@@ -54,6 +54,10 @@
             <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm2.46-7.12l1.41-1.41L12 12.59l2.12-2.12 1.41 1.41L13.41 14l2.12 2.12-1.41 1.41L12 15.41l-2.12 2.12-1.41-1.41L10.59 14l-2.13-2.12zM15.5 4l-1-1h-5l-1 1H5v2h14V4z"/></svg>
             <span>{{ i18n.t('rmSilence') }}</span>
         </button>
+        <button (click)="toggleStudioQuality()" class="tool-btn" [title]="i18n.t('studioQuality')" [class.active]="isStudioQuality()">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            <span>{{ i18n.t('studioQuality') }}</span>
+        </button>
     }
 
     <div class="separator"></div>

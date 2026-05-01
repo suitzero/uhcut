@@ -21,11 +21,11 @@ console.log('[Web Assets]');
 assert(fs.existsSync(path.join(__dirname, '..', 'www', 'index.html')), 'index.html exists');
 
 const wwwFiles = fs.readdirSync(path.join(__dirname, '..', 'www'));
-const hasMainJs = wwwFiles.some(f => f.startsWith('main-') && f.endsWith('.js'));
-const hasStylesCss = wwwFiles.some(f => f.startsWith('styles-') && f.endsWith('.css'));
+const hasMainJs = wwwFiles.some(f => f === 'main.js' || (f.startsWith('main-') && f.endsWith('.js')));
+const hasStylesCss = wwwFiles.some(f => f === 'styles.css' || (f.startsWith('styles-') && f.endsWith('.css')));
 
-assert(hasMainJs, 'main-*.js exists');
-assert(hasStylesCss, 'styles-*.css exists');
+assert(hasMainJs, 'main.js exists');
+assert(hasStylesCss, 'styles.css exists');
 assert(fs.existsSync(path.join(__dirname, '..', 'www', 'manifest.json')), 'manifest.json exists');
 
 // 2. Capacitor config
@@ -46,7 +46,7 @@ assert(pkg.dependencies['@capacitor/ios'], '@capacitor/ios is a dependency');
 console.log('\n[HTML Validation]');
 const html = fs.readFileSync(path.join(__dirname, '..', 'www', 'index.html'), 'utf8');
 assert(html.includes('<script'), 'index.html includes script tag');
-assert(html.includes('main-'), 'index.html references main-*.js');
+assert(html.includes('main'), 'index.html references main');
 
 // Results
 console.log(`\n--- Results: ${passed} passed, ${failed} failed ---`);

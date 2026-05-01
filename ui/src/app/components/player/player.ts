@@ -18,6 +18,8 @@ export class Player implements AfterViewInit, OnDestroy {
   private animationFrameId = 0;
   private mainVideoSource: MediaElementAudioSourceNode | null = null;
   private mainVideoGain: GainNode | null = null;
+  private mainVideoEnhancerNodes: { hp: BiquadFilterNode, peak: BiquadFilterNode, comp: DynamicsCompressorNode } | null = null;
+  private isMainVideoEnhanced = false;
 
   // Computed state for UI
   formattedTime = computed(() => {
@@ -133,6 +135,48 @@ export class Player implements AfterViewInit, OnDestroy {
           } catch(e) { /* Already connected */ }
       }
 
+      if (this.mainVideoSource && this.mainVideoGain && videoClip) {
+          const shouldEnhance = !!videoClip.enhancedAudio;
+          if (shouldEnhance !== this.isMainVideoEnhanced) {
+              try { this.mainVideoSource.disconnect(); } catch (e) {}
+              if (this.mainVideoEnhancerNodes) {
+                  try { this.mainVideoEnhancerNodes.hp.disconnect(); } catch (e) {}
+                  try { this.mainVideoEnhancerNodes.peak.disconnect(); } catch (e) {}
+                  try { this.mainVideoEnhancerNodes.comp.disconnect(); } catch (e) {}
+              }
+
+              if (shouldEnhance) {
+                  const hp = this.audio.audioCtx.createBiquadFilter();
+                  hp.type = 'highpass';
+                  hp.frequency.value = 80;
+
+                  const peak = this.audio.audioCtx.createBiquadFilter();
+                  peak.type = 'peaking';
+                  peak.frequency.value = 3000;
+                  peak.Q.value = 1.0;
+                  peak.gain.value = 3;
+
+                  const comp = this.audio.audioCtx.createDynamicsCompressor();
+                  comp.threshold.value = -24;
+                  comp.knee.value = 30;
+                  comp.ratio.value = 12;
+                  comp.attack.value = 0.003;
+                  comp.release.value = 0.25;
+
+                  this.mainVideoEnhancerNodes = { hp, peak, comp };
+
+                  this.mainVideoSource.connect(hp);
+                  hp.connect(peak);
+                  peak.connect(comp);
+                  comp.connect(this.mainVideoGain);
+              } else {
+                  this.mainVideoEnhancerNodes = null;
+                  this.mainVideoSource.connect(this.mainVideoGain);
+              }
+              this.isMainVideoEnhanced = shouldEnhance;
+          }
+      }
+
       if (videoClip) {
           const media = this.state.getMedia(videoClip.mediaId);
           if (media && v.src !== media.url) v.src = media.url || '';
@@ -188,7 +232,7 @@ export class Player implements AfterViewInit, OnDestroy {
       activeClips.forEach(clip => {
            const media = this.state.getMedia(clip.mediaId);
            if (media && media.url) {
-               this.audio.playAudio(clip.id, media.url, clip.startTime, clip.offset, clip.volume, clip.muted, time);
+               this.audio.playAudio(clip.id, media.url, clip.startTime, clip.offset, clip.volume, clip.muted, time, !!clip.enhancedAudio);
            }
       });
   }

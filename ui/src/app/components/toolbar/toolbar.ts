@@ -270,6 +270,24 @@ export class Toolbar {
       return clip ? !!clip.stabilized : false;
   });
 
+  isStudioQuality = computed(() => {
+      const id = this.state.selectedClipId();
+      if (!id) return false;
+      const clip = this.state.findClip(id);
+      return clip ? !!clip.enhancedAudio : false;
+  });
+
+  toggleStudioQuality() {
+      const id = this.state.selectedClipId();
+      if (id) {
+          const clip = this.state.findClip(id);
+          if (clip) {
+              this.state.saveState();
+              this.state.updateClip(id, { enhancedAudio: !clip.enhancedAudio });
+          }
+      }
+  }
+
   toggleStabilize() {
       const id = this.state.selectedClipId();
       if (id) {

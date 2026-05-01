@@ -200,7 +200,7 @@ export class ExportService {
           activeClips.forEach(clip => {
              const am = stateService.getMedia(clip.mediaId);
              if (am && am.url) {
-                audioService.playAudio(clip.id, am.url, clip.startTime, clip.offset, clip.volume, clip.muted, t);
+                audioService.playAudio(clip.id, am.url, clip.startTime, clip.offset, clip.volume, clip.muted, t, !!clip.enhancedAudio);
              }
           });
 

@@ -24,6 +24,7 @@ export interface Clip {
   stabilized?: boolean;
   stabilizationData?: {time: number, dx: number, dy: number}[];
   stabilizationZoom?: number;
+  enhancedAudio?: boolean;
 }
 
 export interface Caption {

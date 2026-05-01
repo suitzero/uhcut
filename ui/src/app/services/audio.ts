@@ -8,8 +8,13 @@ export class AudioService {
   masterGain: GainNode;
   exportDest: MediaStreamAudioDestinationNode;
 
-  // Audio Pool: clipId -> { audio, source, gain }
-  private audioPool: { [key: string]: { audio: HTMLAudioElement, source: MediaElementAudioSourceNode, gain: GainNode } } = {};
+  // Audio Pool: clipId -> { audio, source, gain, enhancerNodes }
+  private audioPool: { [key: string]: {
+      audio: HTMLAudioElement,
+      source: MediaElementAudioSourceNode,
+      gain: GainNode,
+      enhancerNodes?: { hp: BiquadFilterNode, peak: BiquadFilterNode, comp: DynamicsCompressorNode }
+  } } = {};
 
   // Waveform cache
   private waveformCache: { [key: string]: AudioBuffer } = {};
@@ -51,7 +56,7 @@ export class AudioService {
       }
   }
 
-  playAudio(clipId: string, url: string, startTime: number, offset: number, volume: number, muted: boolean, playbackTime: number) {
+  playAudio(clipId: string, url: string, startTime: number, offset: number, volume: number, muted: boolean, playbackTime: number, enhancedAudio: boolean = false) {
       let item = this.audioPool[clipId];
 
       if (!item) {
@@ -59,10 +64,16 @@ export class AudioService {
           a.crossOrigin = 'anonymous';
           const source = this.audioCtx.createMediaElementSource(a);
           const gain = this.audioCtx.createGain();
-          source.connect(gain);
-          gain.connect(this.masterGain);
+
           item = { audio: a, source, gain };
           this.audioPool[clipId] = item;
+          this.setupRouting(item, enhancedAudio);
+      } else {
+          // Check if enhancement state changed
+          const currentlyEnhanced = !!item.enhancerNodes;
+          if (currentlyEnhanced !== enhancedAudio) {
+              this.setupRouting(item, enhancedAudio);
+          }
       }
 
       const clipTime = playbackTime - startTime + offset;
@@ -92,11 +103,55 @@ export class AudioService {
           if (!activeClipIds.includes(id)) {
               const item = this.audioPool[id];
               item.audio.pause();
-              item.gain.disconnect();
-              item.source.disconnect();
+              this.disconnectItem(item);
               delete this.audioPool[id];
           }
       });
+  }
+
+  private setupRouting(item: any, enhancedAudio: boolean) {
+      this.disconnectItem(item);
+
+      if (enhancedAudio) {
+          const hp = this.audioCtx.createBiquadFilter();
+          hp.type = 'highpass';
+          hp.frequency.value = 80;
+
+          const peak = this.audioCtx.createBiquadFilter();
+          peak.type = 'peaking';
+          peak.frequency.value = 3000;
+          peak.Q.value = 1.0;
+          peak.gain.value = 3;
+
+          const comp = this.audioCtx.createDynamicsCompressor();
+          comp.threshold.value = -24;
+          comp.knee.value = 30;
+          comp.ratio.value = 12;
+          comp.attack.value = 0.003;
+          comp.release.value = 0.25;
+
+          item.enhancerNodes = { hp, peak, comp };
+
+          item.source.connect(hp);
+          hp.connect(peak);
+          peak.connect(comp);
+          comp.connect(item.gain);
+      } else {
+          item.enhancerNodes = undefined;
+          item.source.connect(item.gain);
+      }
+
+      item.gain.connect(this.masterGain);
+  }
+
+  private disconnectItem(item: any) {
+      try { item.source.disconnect(); } catch (e) {}
+      try { item.gain.disconnect(); } catch (e) {}
+      if (item.enhancerNodes) {
+          try { item.enhancerNodes.hp.disconnect(); } catch (e) {}
+          try { item.enhancerNodes.peak.disconnect(); } catch (e) {}
+          try { item.enhancerNodes.comp.disconnect(); } catch (e) {}
+      }
   }
 
   resumeContext() {

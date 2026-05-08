@@ -54,7 +54,21 @@ export class ExportService {
 
       const file = MP4Box.createFile();
       const fps = 30;
-      const totalFrames = Math.ceil(maxTime * fps);
+      const logoDuration = 2; // 2 seconds of logo at the end
+      const videoFrames = Math.ceil(maxTime * fps);
+      const totalFrames = videoFrames + (logoDuration * fps);
+
+      let logoImage: HTMLImageElement | null = null;
+      try {
+          logoImage = new Image();
+          logoImage.src = 'assets/logo.png';
+          await new Promise<void>((res, rej) => {
+              logoImage!.onload = () => res();
+              logoImage!.onerror = () => rej();
+          });
+      } catch (e) {
+          logoImage = null;
+      }
 
       let videoTrackId: number | null = null;
       let audioTrackId: number | null = null;
@@ -274,6 +288,17 @@ export class ExportService {
               }
 
               ctx.restore();
+          } else if (f >= videoFrames && logoImage) {
+              const scale = Math.min((width * 0.3) / logoImage.width, (height * 0.3) / logoImage.height);
+              const drawW = logoImage.width * scale;
+              const drawH = logoImage.height * scale;
+              ctx.drawImage(logoImage, (width - drawW) / 2, (height - drawH) / 2 - 20, drawW, drawH);
+
+              ctx.fillStyle = 'white';
+              ctx.font = `bold ${Math.round(height * 0.05)}px sans-serif`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'top';
+              ctx.fillText('UhCut', width / 2, (height + drawH) / 2);
           }
 
           // We must wait a tiny bit to let audio context process, but since it's real time for audio,

@@ -50,6 +50,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build Web Assets
+        run: npm run build:ui
+
       - name: Sync Capacitor Android
         run: npx cap sync android
 
@@ -92,6 +95,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build Web Assets
+        run: npm run build:ui
+
       - name: Sync Capacitor Android
         run: npx cap sync android
 
@@ -117,12 +123,12 @@ jobs:
               -Pandroid.injected.signing.key.alias="$ANDROID_KEY_ALIAS" \
               -Pandroid.injected.signing.key.password="$ANDROID_KEY_PASSWORD"
           else
-            echo "No keystore found, building unsigned release APK"
-            ./gradlew assembleRelease
+            echo "No keystore found, building debug APK instead of unsigned release"
+            ./gradlew assembleDebug
           fi
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: app-release
-          path: android/app/build/outputs/apk/release/app-release*.apk
+          path: android/app/build/outputs/apk/**/*.apk
